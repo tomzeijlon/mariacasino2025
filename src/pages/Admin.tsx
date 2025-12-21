@@ -2,9 +2,10 @@ import { useVoting } from '@/hooks/useVoting';
 import { Snowfall } from '@/components/Snowfall';
 import { VoteChart } from '@/components/VoteChart';
 import { ParticipantManager } from '@/components/ParticipantManager';
+import { VotingHistory } from '@/components/VotingHistory';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { RefreshCw, StopCircle, Gift, Users, BarChart3 } from 'lucide-react';
+import { RefreshCw, StopCircle, Gift, Users, BarChart3, History } from 'lucide-react';
 import { toast } from 'sonner';
 import { Link } from 'react-router-dom';
 
@@ -147,6 +148,21 @@ export default function Admin() {
                   </div>
                 </>
               )}
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Voting History */}
+        <div className="max-w-6xl mx-auto mt-8">
+          <Card className="bg-card/80 backdrop-blur border-border">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 font-display text-2xl">
+                <History className="w-6 h-6 text-gold" />
+                Röstningshistorik
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <VotingHistory />
             </CardContent>
           </Card>
         </div>
