@@ -5,6 +5,9 @@ export interface Participant {
   id: string;
   name: string;
   is_locked: boolean;
+  has_received_package: boolean;
+  sort_order: number | null;
+  last_voted_at: string | null;
   created_at: string;
 }
 
@@ -50,7 +53,7 @@ export function useVoting() {
     setLoading(true);
     
     const [participantsRes, sessionRes, votesRes] = await Promise.all([
-      supabase.from('participants').select('*').order('created_at'),
+      supabase.from('participants').select('*').order('sort_order', { ascending: true, nullsFirst: false }),
       supabase.from('voting_sessions').select('*').eq('is_active', true).maybeSingle(),
       supabase.from('votes').select('*'),
     ]);
@@ -76,7 +79,7 @@ export function useVoting() {
     const channel = supabase
       .channel('voting-changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'participants' }, () => {
-        supabase.from('participants').select('*').order('created_at').then(({ data }) => {
+        supabase.from('participants').select('*').order('sort_order', { ascending: true, nullsFirst: false }).then(({ data }) => {
           if (data) setParticipants(data);
         });
       })
@@ -108,9 +111,11 @@ export function useVoting() {
 
   // Add participant
   const addParticipant = useCallback(async (name: string) => {
-    const { error } = await supabase.from('participants').insert({ name });
+    // Get max sort_order
+    const maxOrder = participants.reduce((max, p) => Math.max(max, p.sort_order || 0), 0);
+    const { error } = await supabase.from('participants').insert({ name, sort_order: maxOrder + 1 });
     return { error };
-  }, []);
+  }, [participants]);
 
   // Remove participant
   const removeParticipant = useCallback(async (id: string) => {
@@ -156,14 +161,46 @@ export function useVoting() {
   // Reset current voting (clear votes, keep session)
   const resetVoting = useCallback(async () => {
     if (session?.id) {
-      // Save current results to history
-      const voteCounts = getVoteCounts();
+      // Calculate vote counts from current votes BEFORE clearing
+      const counts: Record<string, number> = {};
+      const voterNames: string[] = [];
+      
+      for (const vote of votes) {
+        counts[vote.voted_for_participant_id] = (counts[vote.voted_for_participant_id] || 0) + 1;
+      }
+      
+      // Get correct voters - people who voted for the current participant
+      const { data: votesWithNames } = await supabase
+        .from('votes')
+        .select('voter_name, voted_for_participant_id')
+        .eq('session_id', session.id);
+      
+      if (votesWithNames) {
+        votesWithNames.forEach(v => {
+          if (v.voted_for_participant_id === session.current_participant_id && v.voter_name) {
+            voterNames.push(v.voter_name);
+          }
+        });
+      }
+
+      const voteCounts = participants
+        .filter(p => !p.is_locked)
+        .map(p => ({
+          participantId: p.id,
+          participantName: p.name,
+          count: counts[p.id] || 0,
+        }))
+        .sort((a, b) => b.count - a.count);
+
       const currentParticipant = participants.find(p => p.id === session.current_participant_id);
       
       if (currentParticipant && voteCounts.length > 0) {
         await supabase.from('voting_history').insert({
           participant_id: session.current_participant_id,
+          package_owner_id: session.current_participant_id,
           results: JSON.stringify(voteCounts),
+          correct_voters: JSON.stringify(voterNames),
+          move_count: 0,
         });
       }
 
@@ -171,7 +208,7 @@ export function useVoting() {
       await supabase.from('votes').delete().eq('session_id', session.id);
       setVotes([]);
     }
-  }, [session, participants]);
+  }, [session, participants, votes]);
 
   // End voting session
   const endVoting = useCallback(async () => {
@@ -187,6 +224,7 @@ export function useVoting() {
     if (!session?.id) return { error: new Error('No active session') };
 
     const voterToken = getVoterToken();
+    const voterName = localStorage.getItem('voter_name') || null;
     
     // Check if already voted in this session
     const existingVote = votes.find(v => v.voter_token === voterToken);
@@ -195,7 +233,7 @@ export function useVoting() {
       // Update existing vote
       const { error } = await supabase
         .from('votes')
-        .update({ voted_for_participant_id: participantId })
+        .update({ voted_for_participant_id: participantId, voter_name: voterName })
         .eq('id', existingVote.id);
       return { error };
     } else {
@@ -204,6 +242,7 @@ export function useVoting() {
         session_id: session.id,
         voted_for_participant_id: participantId,
         voter_token: voterToken,
+        voter_name: voterName,
       });
       return { error };
     }
@@ -245,6 +284,95 @@ export function useVoting() {
     return participants.find(p => p.id === session.current_participant_id) || null;
   }, [session, participants]);
 
+  // Update participant order
+  const updateParticipantOrder = useCallback(async (orderedIds: string[]) => {
+    const updates = orderedIds.map((id, index) => 
+      supabase.from('participants').update({ sort_order: index + 1 }).eq('id', id)
+    );
+    await Promise.all(updates);
+  }, []);
+
+  // Set has_received_package
+  const setHasReceivedPackage = useCallback(async (id: string, hasPackage: boolean) => {
+    const { error } = await supabase
+      .from('participants')
+      .update({ has_received_package: hasPackage })
+      .eq('id', id);
+    return { error };
+  }, []);
+
+  // Get next participant in order (skip locked and those with packages)
+  const getNextParticipant = useCallback(() => {
+    // Find the last voted participant
+    const sortedParticipants = [...participants].sort((a, b) => 
+      (a.sort_order || 0) - (b.sort_order || 0)
+    );
+    
+    // Find participants who can be voted on
+    const eligible = sortedParticipants.filter(p => 
+      !p.is_locked && !p.has_received_package
+    );
+    
+    if (eligible.length === 0) return null;
+    
+    // Find the last one that had voting
+    const lastVotedIndex = sortedParticipants.findIndex(p => 
+      p.last_voted_at && eligible.some(e => e.id !== p.id)
+    );
+    
+    // Simple: just get the first eligible one by sort order
+    return eligible[0] || null;
+  }, [participants]);
+
+  // Mark participant as having finished voting
+  const markVotingComplete = useCallback(async (participantId: string, winnerId: string) => {
+    // Update winner to have received package
+    await supabase
+      .from('participants')
+      .update({ has_received_package: true })
+      .eq('id', winnerId);
+    
+    // Mark participant as having finished voting
+    await supabase
+      .from('participants')
+      .update({ last_voted_at: new Date().toISOString() })
+      .eq('id', participantId);
+  }, []);
+
+  // Reset all game state except names
+  const resetGame = useCallback(async () => {
+    // Reset all participants
+    await supabase
+      .from('participants')
+      .update({ 
+        is_locked: false, 
+        has_received_package: false, 
+        last_voted_at: null 
+      })
+      .neq('id', '00000000-0000-0000-0000-000000000000');
+    
+    // Delete all history
+    await supabase
+      .from('voting_history')
+      .delete()
+      .neq('id', '00000000-0000-0000-0000-000000000000');
+    
+    // End any active session
+    await supabase
+      .from('voting_sessions')
+      .update({ is_active: false })
+      .eq('is_active', true);
+    
+    // Delete all votes
+    await supabase
+      .from('votes')
+      .delete()
+      .neq('id', '00000000-0000-0000-0000-000000000000');
+    
+    setSession(null);
+    setVotes([]);
+  }, []);
+
   return {
     participants,
     session,
@@ -262,5 +390,10 @@ export function useVoting() {
     hasVoted,
     getCurrentVote,
     getCurrentParticipant,
+    updateParticipantOrder,
+    setHasReceivedPackage,
+    getNextParticipant,
+    markVotingComplete,
+    resetGame,
   };
 }
