@@ -17,21 +17,30 @@ export type Database = {
       participants: {
         Row: {
           created_at: string
+          has_received_package: boolean
           id: string
           is_locked: boolean
+          last_voted_at: string | null
           name: string
+          sort_order: number | null
         }
         Insert: {
           created_at?: string
+          has_received_package?: boolean
           id?: string
           is_locked?: boolean
+          last_voted_at?: string | null
           name: string
+          sort_order?: number | null
         }
         Update: {
           created_at?: string
+          has_received_package?: boolean
           id?: string
           is_locked?: boolean
+          last_voted_at?: string | null
           name?: string
+          sort_order?: number | null
         }
         Relationships: []
       }
@@ -41,6 +50,7 @@ export type Database = {
           id: string
           session_id: string | null
           voted_for_participant_id: string | null
+          voter_name: string | null
           voter_token: string
         }
         Insert: {
@@ -48,6 +58,7 @@ export type Database = {
           id?: string
           session_id?: string | null
           voted_for_participant_id?: string | null
+          voter_name?: string | null
           voter_token: string
         }
         Update: {
@@ -55,6 +66,7 @@ export type Database = {
           id?: string
           session_id?: string | null
           voted_for_participant_id?: string | null
+          voter_name?: string | null
           voter_token?: string
         }
         Relationships: [
@@ -76,20 +88,29 @@ export type Database = {
       }
       voting_history: {
         Row: {
+          correct_voters: Json | null
           created_at: string
           id: string
+          move_count: number
+          package_owner_id: string | null
           participant_id: string | null
           results: Json
         }
         Insert: {
+          correct_voters?: Json | null
           created_at?: string
           id?: string
+          move_count?: number
+          package_owner_id?: string | null
           participant_id?: string | null
           results: Json
         }
         Update: {
+          correct_voters?: Json | null
           created_at?: string
           id?: string
+          move_count?: number
+          package_owner_id?: string | null
           participant_id?: string | null
           results?: Json
         }

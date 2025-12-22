@@ -1,9 +1,25 @@
 import { useState } from 'react';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Participant } from '@/hooks/useVoting';
-import { Plus, Trash2, Lock, Unlock, Gift } from 'lucide-react';
+import { Plus, SkipForward } from 'lucide-react';
 import { toast } from 'sonner';
+import { SortableParticipant } from './SortableParticipant';
 
 interface ParticipantManagerProps {
   participants: Participant[];
@@ -12,6 +28,8 @@ interface ParticipantManagerProps {
   onLock: (id: string) => Promise<{ error: Error | null }>;
   onUnlock: (id: string) => Promise<{ error: Error | null }>;
   onStartVoting: (id: string) => Promise<{ error: Error | null }>;
+  onUpdateOrder: (orderedIds: string[]) => Promise<void>;
+  onStartNextVoting: () => void;
   currentVotingId: string | null;
 }
 
@@ -22,10 +40,19 @@ export function ParticipantManager({
   onLock,
   onUnlock,
   onStartVoting,
+  onUpdateOrder,
+  onStartNextVoting,
   currentVotingId,
 }: ParticipantManagerProps) {
   const [newName, setNewName] = useState('');
   const [isAdding, setIsAdding] = useState(false);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
 
   const handleAdd = async () => {
     if (!newName.trim()) return;
@@ -70,6 +97,21 @@ export function ParticipantManager({
     }
   };
 
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+    
+    if (over && active.id !== over.id) {
+      const oldIndex = participants.findIndex(p => p.id === active.id);
+      const newIndex = participants.findIndex(p => p.id === over.id);
+      
+      const newOrder = arrayMove(participants, oldIndex, newIndex);
+      await onUpdateOrder(newOrder.map(p => p.id));
+    }
+  };
+
+  // Find next eligible participant
+  const nextEligible = participants.find(p => !p.is_locked && !p.has_received_package);
+
   return (
     <div className="space-y-6">
       {/* Add participant form */}
@@ -91,74 +133,49 @@ export function ParticipantManager({
         </Button>
       </div>
 
-      {/* Participant list */}
-      <div className="space-y-3">
-        {participants.map((participant) => (
-          <div
-            key={participant.id}
-            className={`flex items-center gap-3 p-4 rounded-xl border transition-all duration-300 ${
-              participant.is_locked
-                ? 'bg-forest/20 border-forest/50'
-                : currentVotingId === participant.id
-                ? 'bg-primary/20 border-primary glow-primary'
-                : 'bg-card border-border hover:border-gold/30'
-            }`}
-          >
-            <Gift className={`w-5 h-5 ${participant.is_locked ? 'text-forest' : 'text-gold'}`} />
-            
-            <span className={`flex-1 font-display text-lg ${participant.is_locked ? 'line-through text-muted-foreground' : ''}`}>
-              {participant.name}
-              {participant.is_locked && (
-                <span className="ml-2 text-sm text-forest font-sans">✓ Rätt svar</span>
-              )}
-              {currentVotingId === participant.id && (
-                <span className="ml-2 text-sm text-primary font-sans animate-pulse">● Röstning pågår</span>
-              )}
-            </span>
+      {/* Next voting button */}
+      {nextEligible && !currentVotingId && (
+        <Button
+          onClick={onStartNextVoting}
+          variant="festive"
+          className="w-full"
+          size="lg"
+        >
+          <SkipForward className="w-4 h-4 mr-2" />
+          Starta röstning för nästa: {nextEligible.name}
+        </Button>
+      )}
 
-            <div className="flex gap-2">
-              {!participant.is_locked && (
-                <Button
-                  size="sm"
-                  variant="vote"
-                  onClick={() => handleStartVoting(participant)}
-                  disabled={currentVotingId === participant.id}
-                >
-                  Rösta
-                </Button>
-              )}
-              
-              <Button
-                size="icon"
-                variant="ghost"
-                onClick={() => handleLockToggle(participant)}
-                title={participant.is_locked ? 'Lås upp' : 'Lås (rätt svar)'}
-              >
-                {participant.is_locked ? (
-                  <Unlock className="w-4 h-4 text-forest" />
-                ) : (
-                  <Lock className="w-4 h-4 text-muted-foreground" />
-                )}
-              </Button>
-
-              <Button
-                size="icon"
-                variant="ghost"
-                onClick={() => handleRemove(participant)}
-                className="hover:text-destructive"
-              >
-                <Trash2 className="w-4 h-4" />
-              </Button>
-            </div>
+      {/* Participant list with drag and drop */}
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragEnd={handleDragEnd}
+      >
+        <SortableContext
+          items={participants.map(p => p.id)}
+          strategy={verticalListSortingStrategy}
+        >
+          <div className="space-y-3">
+            {participants.map((participant) => (
+              <SortableParticipant
+                key={participant.id}
+                participant={participant}
+                currentVotingId={currentVotingId}
+                onRemove={handleRemove}
+                onLockToggle={handleLockToggle}
+                onStartVoting={handleStartVoting}
+              />
+            ))}
           </div>
-        ))}
+        </SortableContext>
+      </DndContext>
 
-        {participants.length === 0 && (
-          <p className="text-center text-muted-foreground py-8">
-            Inga deltagare ännu. Lägg till personer som deltar i leken!
-          </p>
-        )}
-      </div>
+      {participants.length === 0 && (
+        <p className="text-center text-muted-foreground py-8">
+          Inga deltagare ännu. Lägg till personer som deltar i leken!
+        </p>
+      )}
     </div>
   );
 }

@@ -1,10 +1,16 @@
+import { useState, useEffect } from 'react';
 import { useVoting } from '@/hooks/useVoting';
 import { Snowfall } from '@/components/Snowfall';
 import { VotingPanel } from '@/components/VotingPanel';
+import { VoterNameGate } from '@/components/VoterNameGate';
 import { Gift } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function Vote() {
+  const [voterName, setVoterName] = useState<string | null>(() => {
+    return localStorage.getItem('voter_name');
+  });
+
   const {
     participants,
     loading,
@@ -26,6 +32,10 @@ export default function Vote() {
     return { error: result.error instanceof Error ? result.error : null };
   };
 
+  if (!voterName) {
+    return <VoterNameGate onSuccess={setVoterName} />;
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen gradient-festive flex items-center justify-center">
@@ -46,10 +56,10 @@ export default function Vote() {
         {/* Header */}
         <header className="text-center mb-12">
           <h1 className="font-display text-4xl md:text-5xl text-gradient-gold mb-4">
-            🎁 Julklappslek
+            🎰 Maria Casino
           </h1>
           <p className="text-muted-foreground text-lg">
-            Vem borde ha paketet egentligen?
+            Hej {voterName}! Vem borde ha paketet egentligen?
           </p>
         </header>
 
