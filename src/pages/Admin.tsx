@@ -102,7 +102,8 @@ export default function Admin() {
   };
 
   const handleLockParticipant = async (id: string) => {
-    const { error } = await lockParticipant(id);
+    // Pass the current participant (package owner) so we can correctly update voting_history
+    const { error } = await lockParticipant(id, currentParticipant?.id);
     if (!error) {
       playLocked();
     }
