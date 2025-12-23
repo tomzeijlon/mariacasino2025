@@ -72,13 +72,14 @@ export default function GameSummary() {
       const participantMap = new Map(participants.map(p => [p.id, p.name]));
 
       // Calculate participant stats (easiest/hardest to guess)
+      // We track stats per locked_participant_id (the actual correct owner)
       const participantStats = new Map<string, ParticipantStat>();
       
       history.forEach((entry: HistoryEntry) => {
-        const participantId = entry.participant_id;
-        if (!participantId) return;
+        const lockedId = entry.locked_participant_id;
+        if (!lockedId) return; // Skip if not yet locked
 
-        const name = participantMap.get(participantId) || 'Okänd';
+        const name = participantMap.get(lockedId) || 'Okänd';
         
         let results: VoteCount[] = [];
         try {
@@ -92,17 +93,18 @@ export default function GameSummary() {
         }
 
         const totalVotes = results.reduce((sum, r) => sum + r.count, 0);
-        const correctVotes = results.find(r => r.participantId === participantId)?.count || 0;
+        // Correct votes are votes for the person who was locked as the correct owner
+        const correctVotes = results.find(r => r.participantId === lockedId)?.count || 0;
         const wrongVotes = totalVotes - correctVotes;
 
-        const existing = participantStats.get(participantId);
+        const existing = participantStats.get(lockedId);
         if (existing) {
           existing.totalVotes += totalVotes;
           existing.wrongVotes += wrongVotes;
           existing.roundCount += 1;
         } else {
-          participantStats.set(participantId, {
-            id: participantId,
+          participantStats.set(lockedId, {
+            id: lockedId,
             name,
             totalVotes,
             wrongVotes,
