@@ -19,7 +19,10 @@ export default function Vote() {
     getCurrentParticipant,
     getCurrentVote,
     votes,
+    getTiebreakerCandidates,
   } = useVoting();
+
+  const tiebreakerCandidates = getTiebreakerCandidates();
 
   const currentParticipant = getCurrentParticipant();
   const currentVote = getCurrentVote();
@@ -84,6 +87,7 @@ export default function Vote() {
             currentParticipant={currentParticipant}
             currentVote={currentVote}
             onVote={handleVote}
+            tiebreakerCandidates={tiebreakerCandidates}
           />
         </div>
       </div>

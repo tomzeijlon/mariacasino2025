@@ -1,12 +1,13 @@
 import { Button } from '@/components/ui/button';
 import { Participant } from '@/hooks/useVoting';
-import { Gift, Check } from 'lucide-react';
+import { Gift, Check, Scale } from 'lucide-react';
 
 interface VotingPanelProps {
   participants: Participant[];
   currentParticipant: Participant | null;
   currentVote: { voted_for_participant_id: string } | undefined;
   onVote: (participantId: string) => Promise<{ error: Error | null }>;
+  tiebreakerCandidates?: string[] | null;
 }
 
 export function VotingPanel({
@@ -14,8 +15,12 @@ export function VotingPanel({
   currentParticipant,
   currentVote,
   onVote,
+  tiebreakerCandidates,
 }: VotingPanelProps) {
-  const votableParticipants = participants.filter(p => !p.is_locked);
+  // If tiebreaker mode, only show those candidates
+  const votableParticipants = tiebreakerCandidates
+    ? participants.filter(p => tiebreakerCandidates.includes(p.id))
+    : participants.filter(p => !p.is_locked);
 
   if (!currentParticipant) {
     return (
@@ -33,6 +38,16 @@ export function VotingPanel({
 
   return (
     <div className="space-y-6">
+      {/* Tiebreaker indicator */}
+      {tiebreakerCandidates && (
+        <div className="text-center p-3 rounded-lg bg-gold/20 border border-gold">
+          <div className="flex items-center justify-center gap-2 text-gold font-medium">
+            <Scale className="w-5 h-5" />
+            <span>Omröstning! Rösta igen mellan dessa {tiebreakerCandidates.length}.</span>
+          </div>
+        </div>
+      )}
+
       {/* Current voting target */}
       <div className="text-center">
         <p className="text-gold text-sm uppercase tracking-widest mb-2">

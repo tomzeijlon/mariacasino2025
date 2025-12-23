@@ -16,6 +16,7 @@ interface HistoryEntry {
   id: string;
   participant_id: string | null;
   package_owner_id: string | null;
+  locked_participant_id: string | null;
   results: unknown;
   move_count: number;
   correct_voters: unknown;
@@ -63,24 +64,12 @@ export default function GameSummary() {
         .from('participants')
         .select('*');
 
-      // Fetch all votes with their sessions to know which participant was being voted on
-      const { data: allVotes } = await supabase
-        .from('votes')
-        .select('voter_name, voted_for_participant_id, session_id');
-      
-      const { data: allSessions } = await supabase
-        .from('voting_sessions')
-        .select('id, current_participant_id');
-
       if (!history || !participants) {
         setLoading(false);
         return;
       }
 
       const participantMap = new Map(participants.map(p => [p.id, p.name]));
-      const sessionParticipantMap = new Map(
-        (allSessions || []).map(s => [s.id, s.current_participant_id])
-      );
 
       // Calculate participant stats (easiest/hardest to guess)
       const participantStats = new Map<string, ParticipantStat>();
@@ -174,52 +163,44 @@ export default function GameSummary() {
         }
       }
 
-      // Find best voter - using correct_voters from history
-      // Also need to calculate total votes per person and exclude votes on own package
+      // Find best voter - FIXED: compare votes against locked_participant_id, not vote winner
+      // correct_voters now stores {voterName: votedForParticipantId}
+      // We need to check if votedForParticipantId matches locked_participant_id
       const voterCorrectCount = new Map<string, number>();
       const voterTotalCount = new Map<string, number>();
       
-      // Count correct votes from history
       history.forEach((entry: HistoryEntry) => {
-        let correctVoters: string[] = [];
+        const lockedId = entry.locked_participant_id;
+        if (!lockedId) return; // Skip if no one was locked yet
+        
+        const packageOwnerName = entry.package_owner_id 
+          ? participantMap.get(entry.package_owner_id) 
+          : null;
+        
+        let voterVotes: Record<string, string> = {};
         try {
           if (typeof entry.correct_voters === 'string') {
-            correctVoters = JSON.parse(entry.correct_voters);
-          } else if (Array.isArray(entry.correct_voters)) {
-            correctVoters = entry.correct_voters as string[];
+            voterVotes = JSON.parse(entry.correct_voters);
+          } else if (entry.correct_voters && typeof entry.correct_voters === 'object') {
+            voterVotes = entry.correct_voters as Record<string, string>;
           }
         } catch {
-          correctVoters = [];
+          voterVotes = {};
         }
 
-        correctVoters.forEach(voterName => {
-          voterCorrectCount.set(voterName, (voterCorrectCount.get(voterName) || 0) + 1);
+        // For each voter in this round
+        Object.entries(voterVotes).forEach(([voterName, votedForId]) => {
+          // Exclude votes on own package
+          if (voterName === packageOwnerName) return;
+          
+          // Count total votes
+          voterTotalCount.set(voterName, (voterTotalCount.get(voterName) || 0) + 1);
+          
+          // Count correct votes (voted for person who was eventually locked)
+          if (votedForId === lockedId) {
+            voterCorrectCount.set(voterName, (voterCorrectCount.get(voterName) || 0) + 1);
+          }
         });
-      });
-
-      // Count total votes per person, excluding votes on their own package
-      if (allVotes) {
-        allVotes.forEach(vote => {
-          if (!vote.voter_name) return;
-          
-          // Get whose package was being voted on
-          const sessionParticipantId = sessionParticipantMap.get(vote.session_id || '');
-          const packageOwnerName = sessionParticipantId ? participantMap.get(sessionParticipantId) : null;
-          
-          // Skip if voting on own package
-          if (packageOwnerName === vote.voter_name) return;
-          
-          voterTotalCount.set(vote.voter_name, (voterTotalCount.get(vote.voter_name) || 0) + 1);
-        });
-      }
-
-      // Also count from history for more accurate totals
-      // Each correct vote is also a total vote
-      voterCorrectCount.forEach((count, name) => {
-        const current = voterTotalCount.get(name) || 0;
-        if (current < count) {
-          voterTotalCount.set(name, count);
-        }
       });
 
       const voterArray: VoterStat[] = [];
