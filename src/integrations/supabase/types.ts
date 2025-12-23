@@ -91,6 +91,7 @@ export type Database = {
           correct_voters: Json | null
           created_at: string
           id: string
+          locked_participant_id: string | null
           move_count: number
           package_owner_id: string | null
           participant_id: string | null
@@ -100,6 +101,7 @@ export type Database = {
           correct_voters?: Json | null
           created_at?: string
           id?: string
+          locked_participant_id?: string | null
           move_count?: number
           package_owner_id?: string | null
           participant_id?: string | null
@@ -109,12 +111,20 @@ export type Database = {
           correct_voters?: Json | null
           created_at?: string
           id?: string
+          locked_participant_id?: string | null
           move_count?: number
           package_owner_id?: string | null
           participant_id?: string | null
           results?: Json
         }
         Relationships: [
+          {
+            foreignKeyName: "voting_history_locked_participant_id_fkey"
+            columns: ["locked_participant_id"]
+            isOneToOne: false
+            referencedRelation: "participants"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "voting_history_participant_id_fkey"
             columns: ["participant_id"]
