@@ -7,7 +7,7 @@ import { VotingHistory } from '@/components/VotingHistory';
 import { AdminPasswordGate } from '@/components/AdminPasswordGate';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { RefreshCw, StopCircle, Gift, Users, BarChart3, History, RotateCcw, Trophy, Package } from 'lucide-react';
+import { RefreshCw, StopCircle, Gift, Users, BarChart3, History, RotateCcw, Trophy, SkipForward } from 'lucide-react';
 import { toast } from 'sonner';
 import { Link, useNavigate } from 'react-router-dom';
 
@@ -35,6 +35,7 @@ export default function Admin() {
     setHasReceivedPackage,
     getNextParticipant,
     markVotingComplete,
+    endAndProceedToNext,
     resetGame,
   } = useVoting();
 
@@ -48,22 +49,33 @@ export default function Admin() {
   };
 
   const handleEnd = async () => {
-    // Get winner before ending
     const winner = voteCounts[0];
     if (winner && currentParticipant) {
       await markVotingComplete(currentParticipant.id, winner.participantId);
     }
-    await endVoting();
+    await endVoting(true, winner?.participantId);
     toast.success('Omröstningen har avslutats');
   };
 
   const handleStartNextVoting = async () => {
-    const next = getNextParticipant();
-    if (next) {
-      await startVoting(next.id);
-      toast.success(`Omröstning för ${next.name}s paket har startat!`);
+    if (session?.is_active && currentParticipant) {
+      // End current voting first with the winner
+      const winner = voteCounts[0];
+      if (winner) {
+        await endAndProceedToNext(winner.participantId);
+        toast.success('Gick vidare till nästa röstning');
+      } else {
+        toast.error('Ingen röster att basera vinnare på');
+      }
     } else {
-      toast.info('Ingen fler deltagare att rösta om');
+      // No active session, just start with first eligible
+      const next = getNextParticipant();
+      if (next) {
+        await startVoting(next.id);
+        toast.success(`Omröstning för ${next.name}s paket har startat!`);
+      } else {
+        toast.info('Ingen fler deltagare att rösta om');
+      }
     }
   };
 
@@ -102,39 +114,36 @@ export default function Admin() {
     <div className="min-h-screen gradient-festive relative">
       <Snowfall />
       
-      <div className="relative z-10 container mx-auto px-4 py-8">
+      <div className="relative z-10 container mx-auto px-4 py-6">
         {/* Header */}
-        <header className="text-center mb-12">
-          <h1 className="font-display text-4xl md:text-6xl text-gradient-gold mb-4">
+        <header className="text-center mb-8">
+          <h1 className="font-display text-3xl md:text-5xl text-gradient-gold mb-3">
             🎰 Maria Casino Admin
           </h1>
-          <p className="text-muted-foreground text-lg">
-            Hantera deltagare och kontrollera omröstningar
-          </p>
-          <div className="flex gap-4 justify-center mt-4">
+          <div className="flex flex-wrap gap-2 justify-center">
             <Link to="/vote">
               <Button variant="outline" size="sm">
-                Öppna röstningssidan →
+                Röstningssidan →
               </Button>
             </Link>
             <Button variant="outline" size="sm" onClick={handleResetGame}>
-              <RotateCcw className="w-4 h-4 mr-2" />
-              Återställ spel
+              <RotateCcw className="w-4 h-4 mr-1" />
+              Återställ
             </Button>
             <Button variant="festive" size="sm" onClick={handleEndGame}>
-              <Trophy className="w-4 h-4 mr-2" />
+              <Trophy className="w-4 h-4 mr-1" />
               Avsluta spelet
             </Button>
           </div>
         </header>
 
-        <div className="grid lg:grid-cols-2 gap-8 max-w-6xl mx-auto">
+        <div className="grid lg:grid-cols-2 gap-6 max-w-6xl mx-auto">
           {/* Participants Management */}
           <Card className="bg-card/80 backdrop-blur border-border">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 font-display text-2xl">
-                <Users className="w-6 h-6 text-gold" />
-                Deltagare
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 font-display text-xl">
+                <Users className="w-5 h-5 text-gold" />
+                Deltagare ({participants.length})
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -154,28 +163,28 @@ export default function Admin() {
 
           {/* Voting Results */}
           <Card className="bg-card/80 backdrop-blur border-border">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 font-display text-2xl">
-                <BarChart3 className="w-6 h-6 text-gold" />
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 font-display text-xl">
+                <BarChart3 className="w-5 h-5 text-gold" />
                 Röstningsresultat
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-6">
+            <CardContent className="space-y-4">
               {/* Current voting info */}
               {currentParticipant ? (
-                <div className="p-4 rounded-xl bg-primary/20 border border-primary">
-                  <p className="text-sm text-muted-foreground mb-1">Pågående omröstning:</p>
-                  <p className="font-display text-2xl text-gradient-gold">
+                <div className="p-3 rounded-xl bg-primary/20 border border-primary">
+                  <p className="text-xs text-muted-foreground mb-1">Pågående omröstning:</p>
+                  <p className="font-display text-xl text-gradient-gold">
                     {currentParticipant.name}s paket
                   </p>
-                  <p className="text-sm text-muted-foreground mt-2">
-                    {totalVotes} {totalVotes === 1 ? 'röst' : 'röster'} hittills
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {totalVotes} {totalVotes === 1 ? 'röst' : 'röster'}
                   </p>
                 </div>
               ) : (
-                <div className="p-4 rounded-xl bg-muted border border-border">
-                  <p className="text-muted-foreground text-center">
-                    Ingen omröstning pågår. Välj en deltagare att rösta om.
+                <div className="p-3 rounded-xl bg-muted border border-border">
+                  <p className="text-muted-foreground text-center text-sm">
+                    Ingen omröstning pågår
                   </p>
                 </div>
               )}
@@ -186,59 +195,47 @@ export default function Admin() {
                   <VoteChart voteCounts={voteCounts} totalVotes={totalVotes} />
                   
                   {/* Control buttons */}
-                  <div className="flex gap-4 pt-4">
+                  <div className="flex gap-2 pt-2">
                     <Button
                       variant="outline"
                       onClick={handleReset}
                       className="flex-1"
+                      size="sm"
                     >
-                      <RefreshCw className="w-4 h-4 mr-2" />
-                      Nollställ röster
+                      <RefreshCw className="w-4 h-4 mr-1" />
+                      Nollställ
+                    </Button>
+                    <Button
+                      variant="festive"
+                      onClick={handleStartNextVoting}
+                      className="flex-1"
+                      size="sm"
+                    >
+                      <SkipForward className="w-4 h-4 mr-1" />
+                      Nästa
                     </Button>
                     <Button
                       variant="destructive"
                       onClick={handleEnd}
                       className="flex-1"
+                      size="sm"
                     >
-                      <StopCircle className="w-4 h-4 mr-2" />
+                      <StopCircle className="w-4 h-4 mr-1" />
                       Avsluta
                     </Button>
                   </div>
                 </>
-              )}
-
-              {/* Package status */}
-              {!session?.is_active && (
-                <div className="border-t border-border pt-4 mt-4">
-                  <p className="text-sm text-muted-foreground mb-3 flex items-center gap-2">
-                    <Package className="w-4 h-4" />
-                    Klicka på "Har paket" för att markera/avmarkera
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {participants.filter(p => !p.is_locked).map(p => (
-                      <Button
-                        key={p.id}
-                        variant={p.has_received_package ? "festive" : "outline"}
-                        size="sm"
-                        onClick={() => handleTogglePackage(p.id, p.has_received_package)}
-                      >
-                        {p.name}
-                        {p.has_received_package && " ✓"}
-                      </Button>
-                    ))}
-                  </div>
-                </div>
               )}
             </CardContent>
           </Card>
         </div>
 
         {/* Voting History */}
-        <div className="max-w-6xl mx-auto mt-8">
+        <div className="max-w-6xl mx-auto mt-6">
           <Card className="bg-card/80 backdrop-blur border-border">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 font-display text-2xl">
-                <History className="w-6 h-6 text-gold" />
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 font-display text-xl">
+                <History className="w-5 h-5 text-gold" />
                 Röstningshistorik
               </CardTitle>
             </CardHeader>

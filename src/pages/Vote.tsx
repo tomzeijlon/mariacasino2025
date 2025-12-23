@@ -17,10 +17,16 @@ export default function Vote() {
     castVote,
     getCurrentParticipant,
     getCurrentVote,
+    votes,
   } = useVoting();
 
   const currentParticipant = getCurrentParticipant();
   const currentVote = getCurrentVote();
+  
+  // Calculate if we're one vote away from complete
+  const totalVotersExpected = participants.filter(p => !p.is_locked).length;
+  const currentVoteCount = votes.length;
+  const isOneVoteAway = currentVoteCount === totalVotersExpected - 1 && totalVotersExpected > 1;
 
   const handleVote = async (participantId: string): Promise<{ error: Error | null }> => {
     const result = await castVote(participantId);
@@ -50,21 +56,26 @@ export default function Vote() {
 
   return (
     <div className="min-h-screen gradient-festive relative">
-      <Snowfall />
+      <Snowfall speed={isOneVoteAway ? 'fast' : 'normal'} />
       
-      <div className="relative z-10 container mx-auto px-4 py-8">
+      <div className="relative z-10 container mx-auto px-4 py-6">
         {/* Header */}
-        <header className="text-center mb-12">
-          <h1 className="font-display text-4xl md:text-5xl text-gradient-gold mb-4">
+        <header className="text-center mb-8">
+          <h1 className="font-display text-3xl md:text-4xl text-gradient-gold mb-2">
             🎰 Maria Casino
           </h1>
-          <p className="text-muted-foreground text-lg">
-            Hej {voterName}! Vem borde ha paketet egentligen?
+          <p className="text-muted-foreground">
+            Hej {voterName}! Vem borde ha paketet?
           </p>
+          {isOneVoteAway && (
+            <p className="text-gold text-sm mt-2 animate-pulse">
+              ⏳ Bara en röst kvar!
+            </p>
+          )}
         </header>
 
         {/* Voting panel */}
-        <div className="max-w-2xl mx-auto">
+        <div className="max-w-md mx-auto">
           <VotingPanel
             participants={participants}
             currentParticipant={currentParticipant}

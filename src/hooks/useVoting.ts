@@ -23,6 +23,7 @@ export interface Vote {
   session_id: string;
   voted_for_participant_id: string;
   voter_token: string;
+  voter_name: string | null;
   created_at: string;
 }
 
@@ -123,11 +124,66 @@ export function useVoting() {
     return { error };
   }, []);
 
-  // Lock participant (correct answer found)
+  // Lock participant (correct answer found) - now with correct_voters tracking
   const lockParticipant = useCallback(async (id: string) => {
+    // When locking, we need to save who voted correctly for this person
+    // Get all votes from any active or recent session for this participant
+    if (session?.id && session.current_participant_id) {
+      const { data: votesData } = await supabase
+        .from('votes')
+        .select('voter_name, voted_for_participant_id')
+        .eq('session_id', session.id);
+      
+      if (votesData) {
+        // People who voted for the winner (the person being locked)
+        const correctVoters = votesData
+          .filter(v => v.voted_for_participant_id === id && v.voter_name)
+          .map(v => v.voter_name as string);
+        
+        // Calculate vote counts
+        const counts: Record<string, number> = {};
+        for (const vote of votesData) {
+          counts[vote.voted_for_participant_id || ''] = (counts[vote.voted_for_participant_id || ''] || 0) + 1;
+        }
+
+        const voteCounts = participants
+          .filter(p => !p.is_locked)
+          .map(p => ({
+            participantId: p.id,
+            participantName: p.name,
+            count: counts[p.id] || 0,
+          }))
+          .sort((a, b) => b.count - a.count);
+
+        // Get current history for move count
+        const { data: existingHistory } = await supabase
+          .from('voting_history')
+          .select('move_count, package_owner_id')
+          .eq('package_owner_id', session.current_participant_id)
+          .order('created_at', { ascending: false })
+          .limit(1);
+
+        // Calculate move count - if winner is different from package owner, it's a move
+        const previousMoveCount = existingHistory?.[0]?.move_count || 0;
+        // First voting for a package OR if winner is different = a move
+        const isFirstVoting = !existingHistory || existingHistory.length === 0;
+        const isMoved = id !== session.current_participant_id;
+        const moveCount = isMoved ? previousMoveCount + 1 : previousMoveCount;
+
+        // Save to history with correct winner ID (the locked person)
+        await supabase.from('voting_history').insert({
+          participant_id: session.current_participant_id, // whose package was being voted on
+          package_owner_id: session.current_participant_id, // original owner of package
+          results: JSON.stringify(voteCounts),
+          correct_voters: JSON.stringify(correctVoters),
+          move_count: isFirstVoting && isMoved ? 1 : moveCount,
+        });
+      }
+    }
+    
     const { error } = await supabase.from('participants').update({ is_locked: true }).eq('id', id);
     return { error };
-  }, []);
+  }, [session, participants]);
 
   // Unlock participant
   const unlockParticipant = useCallback(async (id: string) => {
@@ -158,66 +214,72 @@ export function useVoting() {
     return { error };
   }, [session?.id]);
 
-  // Reset current voting (clear votes, keep session)
+  // Reset current voting (clear votes, keep session) - simplified, no history save here
   const resetVoting = useCallback(async () => {
     if (session?.id) {
-      // Calculate vote counts from current votes BEFORE clearing
-      const counts: Record<string, number> = {};
-      const voterNames: string[] = [];
-      
-      for (const vote of votes) {
-        counts[vote.voted_for_participant_id] = (counts[vote.voted_for_participant_id] || 0) + 1;
-      }
-      
-      // Get correct voters - people who voted for the current participant
-      const { data: votesWithNames } = await supabase
-        .from('votes')
-        .select('voter_name, voted_for_participant_id')
-        .eq('session_id', session.id);
-      
-      if (votesWithNames) {
-        votesWithNames.forEach(v => {
-          if (v.voted_for_participant_id === session.current_participant_id && v.voter_name) {
-            voterNames.push(v.voter_name);
-          }
-        });
-      }
-
-      const voteCounts = participants
-        .filter(p => !p.is_locked)
-        .map(p => ({
-          participantId: p.id,
-          participantName: p.name,
-          count: counts[p.id] || 0,
-        }))
-        .sort((a, b) => b.count - a.count);
-
-      const currentParticipant = participants.find(p => p.id === session.current_participant_id);
-      
-      if (currentParticipant && voteCounts.length > 0) {
-        await supabase.from('voting_history').insert({
-          participant_id: session.current_participant_id,
-          package_owner_id: session.current_participant_id,
-          results: JSON.stringify(voteCounts),
-          correct_voters: JSON.stringify(voterNames),
-          move_count: 0,
-        });
-      }
-
-      // Delete votes
+      // Just delete votes, no history save - history is saved when locking
       await supabase.from('votes').delete().eq('session_id', session.id);
       setVotes([]);
     }
-  }, [session, participants, votes]);
+  }, [session]);
 
-  // End voting session
-  const endVoting = useCallback(async () => {
+  // End voting session and optionally save history
+  const endVoting = useCallback(async (saveToHistory: boolean = false, winnerId?: string) => {
     if (session?.id) {
-      await resetVoting();
+      if (saveToHistory && winnerId && session.current_participant_id) {
+        // Get votes for correct_voters calculation
+        const { data: votesData } = await supabase
+          .from('votes')
+          .select('voter_name, voted_for_participant_id')
+          .eq('session_id', session.id);
+        
+        if (votesData) {
+          const correctVoters = votesData
+            .filter(v => v.voted_for_participant_id === winnerId && v.voter_name)
+            .map(v => v.voter_name as string);
+          
+          const counts: Record<string, number> = {};
+          for (const vote of votesData) {
+            counts[vote.voted_for_participant_id || ''] = (counts[vote.voted_for_participant_id || ''] || 0) + 1;
+          }
+
+          const voteCounts = participants
+            .filter(p => !p.is_locked)
+            .map(p => ({
+              participantId: p.id,
+              participantName: p.name,
+              count: counts[p.id] || 0,
+            }))
+            .sort((a, b) => b.count - a.count);
+
+          // Get previous move count for this package
+          const { data: existingHistory } = await supabase
+            .from('voting_history')
+            .select('move_count')
+            .eq('package_owner_id', session.current_participant_id)
+            .order('created_at', { ascending: false })
+            .limit(1);
+
+          const previousMoveCount = existingHistory?.[0]?.move_count || 0;
+          const isFirstVoting = !existingHistory || existingHistory.length === 0;
+          const isMoved = winnerId !== session.current_participant_id;
+
+          await supabase.from('voting_history').insert({
+            participant_id: session.current_participant_id,
+            package_owner_id: session.current_participant_id,
+            results: JSON.stringify(voteCounts),
+            correct_voters: JSON.stringify(correctVoters),
+            move_count: isFirstVoting && isMoved ? 1 : (isMoved ? previousMoveCount + 1 : previousMoveCount),
+          });
+        }
+      }
+      
+      await supabase.from('votes').delete().eq('session_id', session.id);
       await supabase.from('voting_sessions').update({ is_active: false }).eq('id', session.id);
       setSession(null);
+      setVotes([]);
     }
-  }, [session, resetVoting]);
+  }, [session, participants]);
 
   // Cast a vote
   const castVote = useCallback(async (participantId: string) => {
@@ -302,35 +364,40 @@ export function useVoting() {
   }, []);
 
   // Get next participant in order (skip locked and those with packages)
-  const getNextParticipant = useCallback(() => {
-    // Find the last voted participant
+  const getNextParticipant = useCallback((excludeId?: string) => {
     const sortedParticipants = [...participants].sort((a, b) => 
       (a.sort_order || 0) - (b.sort_order || 0)
     );
     
-    // Find participants who can be voted on
+    // Find participants who can be voted on (not locked, not has package)
     const eligible = sortedParticipants.filter(p => 
-      !p.is_locked && !p.has_received_package
+      !p.is_locked && !p.has_received_package && p.id !== excludeId
     );
     
-    if (eligible.length === 0) return null;
+    if (eligible.length === 0) {
+      // If no eligible except possibly the excluded one, check if excluded is valid
+      if (excludeId) {
+        const excluded = sortedParticipants.find(p => p.id === excludeId);
+        if (excluded && !excluded.is_locked && !excluded.has_received_package) {
+          return excluded;
+        }
+      }
+      return null;
+    }
     
-    // Find the last one that had voting
-    const lastVotedIndex = sortedParticipants.findIndex(p => 
-      p.last_voted_at && eligible.some(e => e.id !== p.id)
-    );
-    
-    // Simple: just get the first eligible one by sort order
-    return eligible[0] || null;
+    return eligible[0];
   }, [participants]);
 
-  // Mark participant as having finished voting
+  // Mark participant as having finished voting and handle package swap
   const markVotingComplete = useCallback(async (participantId: string, winnerId: string) => {
-    // Update winner to have received package
+    // Winner gets the package - marked with has_received_package
     await supabase
       .from('participants')
       .update({ has_received_package: true })
       .eq('id', winnerId);
+    
+    // Note: The previous holder (participantId) gets winner's old package 
+    // but this is NOT marked since it wasn't voted for
     
     // Mark participant as having finished voting
     await supabase
@@ -338,6 +405,27 @@ export function useVoting() {
       .update({ last_voted_at: new Date().toISOString() })
       .eq('id', participantId);
   }, []);
+
+  // End voting and proceed to next (used by "Nästa röstning" button)
+  const endAndProceedToNext = useCallback(async (winnerId: string) => {
+    if (!session?.current_participant_id) return;
+    
+    const currentParticipantId = session.current_participant_id;
+    
+    // Save history and mark winner
+    await markVotingComplete(currentParticipantId, winnerId);
+    
+    // End current session (with history save)
+    await endVoting(true, winnerId);
+    
+    // Find next eligible participant (excluding current)
+    const next = getNextParticipant(currentParticipantId);
+    
+    if (next) {
+      // Start voting for next
+      await startVoting(next.id);
+    }
+  }, [session, markVotingComplete, endVoting, getNextParticipant, startVoting]);
 
   // Reset all game state except names
   const resetGame = useCallback(async () => {
@@ -394,6 +482,7 @@ export function useVoting() {
     setHasReceivedPackage,
     getNextParticipant,
     markVotingComplete,
+    endAndProceedToNext,
     resetGame,
   };
 }

@@ -113,20 +113,21 @@ export function ParticipantManager({
   const nextEligible = participants.find(p => !p.is_locked && !p.has_received_package);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Add participant form */}
-      <div className="flex gap-3">
+      <div className="flex gap-2">
         <Input
           placeholder="Lägg till deltagare..."
           value={newName}
           onChange={(e) => setNewName(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
-          className="flex-1 bg-muted border-border focus:border-gold"
+          className="flex-1 bg-muted border-border focus:border-gold h-9"
         />
         <Button
           onClick={handleAdd}
           disabled={isAdding || !newName.trim()}
           variant="festive"
+          size="sm"
         >
           <Plus className="w-4 h-4" />
           Lägg till
@@ -134,19 +135,19 @@ export function ParticipantManager({
       </div>
 
       {/* Next voting button */}
-      {nextEligible && !currentVotingId && (
+      {nextEligible && (
         <Button
           onClick={onStartNextVoting}
           variant="festive"
           className="w-full"
-          size="lg"
+          size="default"
         >
           <SkipForward className="w-4 h-4 mr-2" />
-          Starta röstning för nästa: {nextEligible.name}
+          {currentVotingId ? 'Nästa röstning' : `Starta röstning: ${nextEligible.name}`}
         </Button>
       )}
 
-      {/* Participant list with drag and drop */}
+      {/* Participant list with drag and drop - compact for 10 participants */}
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
@@ -156,7 +157,7 @@ export function ParticipantManager({
           items={participants.map(p => p.id)}
           strategy={verticalListSortingStrategy}
         >
-          <div className="space-y-3">
+          <div className="space-y-1.5 max-h-[400px] overflow-y-auto">
             {participants.map((participant) => (
               <SortableParticipant
                 key={participant.id}
@@ -172,7 +173,7 @@ export function ParticipantManager({
       </DndContext>
 
       {participants.length === 0 && (
-        <p className="text-center text-muted-foreground py-8">
+        <p className="text-center text-muted-foreground py-4 text-sm">
           Inga deltagare ännu. Lägg till personer som deltar i leken!
         </p>
       )}
