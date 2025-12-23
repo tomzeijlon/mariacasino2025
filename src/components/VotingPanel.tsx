@@ -32,19 +32,19 @@ export function VotingPanel({
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {/* Current voting target */}
       <div className="text-center">
         <p className="text-gold text-sm uppercase tracking-widest mb-2">
           Vems paket borde det vara?
         </p>
-        <h2 className="font-display text-3xl md:text-4xl text-gradient-gold">
+        <h2 className="font-display text-2xl md:text-3xl text-gradient-gold">
           {currentParticipant.name}s paket
         </h2>
       </div>
 
-      {/* Voting buttons */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+      {/* Voting buttons - compact 2-column grid for mobile */}
+      <div className="grid grid-cols-2 gap-2 md:gap-3">
         {votableParticipants.map((participant) => {
           const isVotedFor = currentVote?.voted_for_participant_id === participant.id;
           
@@ -52,15 +52,15 @@ export function VotingPanel({
             <Button
               key={participant.id}
               variant={isVotedFor ? 'festive' : 'vote'}
-              size="lg"
-              className="h-auto py-6 flex-col gap-2 relative"
+              size="sm"
+              className="h-auto py-3 px-2 flex-col gap-1 relative text-sm"
               onClick={() => onVote(participant.id)}
             >
               {isVotedFor && (
-                <Check className="absolute top-2 right-2 w-5 h-5" />
+                <Check className="absolute top-1 right-1 w-4 h-4" />
               )}
-              <Gift className="w-6 h-6" />
-              <span className="font-display text-lg">{participant.name}</span>
+              <Gift className="w-5 h-5" />
+              <span className="font-display text-sm truncate w-full">{participant.name}</span>
             </Button>
           );
         })}
@@ -68,7 +68,7 @@ export function VotingPanel({
 
       {currentVote && (
         <p className="text-center text-muted-foreground text-sm">
-          Du har röstat. Du kan ändra din röst genom att klicka på en annan person.
+          Du har röstat. Klicka på en annan person för att ändra.
         </p>
       )}
     </div>

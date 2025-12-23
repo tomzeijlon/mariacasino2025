@@ -63,14 +63,26 @@ export default function GameSummary() {
         .from('participants')
         .select('*');
 
+      // Fetch all votes with their sessions to know which participant was being voted on
+      const { data: allVotes } = await supabase
+        .from('votes')
+        .select('voter_name, voted_for_participant_id, session_id');
+      
+      const { data: allSessions } = await supabase
+        .from('voting_sessions')
+        .select('id, current_participant_id');
+
       if (!history || !participants) {
         setLoading(false);
         return;
       }
 
       const participantMap = new Map(participants.map(p => [p.id, p.name]));
+      const sessionParticipantMap = new Map(
+        (allSessions || []).map(s => [s.id, s.current_participant_id])
+      );
 
-      // Calculate participant stats
+      // Calculate participant stats (easiest/hardest to guess)
       const participantStats = new Map<string, ParticipantStat>();
       
       history.forEach((entry: HistoryEntry) => {
@@ -115,7 +127,6 @@ export default function GameSummary() {
       
       if (statsArray.length > 0) {
         statsArray.sort((a, b) => {
-          // Sort by wrong votes first, then by round count
           if (a.wrongVotes !== b.wrongVotes) {
             return a.wrongVotes - b.wrongVotes;
           }
@@ -123,7 +134,6 @@ export default function GameSummary() {
         });
         setEasiest(statsArray[0]);
 
-        // Hardest is the opposite
         statsArray.sort((a, b) => {
           if (b.wrongVotes !== a.wrongVotes) {
             return b.wrongVotes - a.wrongVotes;
@@ -143,7 +153,10 @@ export default function GameSummary() {
         const moveCount = entry.move_count || 0;
         
         if (existing) {
-          existing.moveCount += moveCount;
+          // Take the max move count for this package
+          if (moveCount > existing.moveCount) {
+            existing.moveCount = moveCount;
+          }
         } else {
           packageMoves.set(ownerId, {
             ownerId,
@@ -161,9 +174,12 @@ export default function GameSummary() {
         }
       }
 
-      // Find best voter
-      const voterStats = new Map<string, { name: string; correct: number; total: number }>();
+      // Find best voter - using correct_voters from history
+      // Also need to calculate total votes per person and exclude votes on own package
+      const voterCorrectCount = new Map<string, number>();
+      const voterTotalCount = new Map<string, number>();
       
+      // Count correct votes from history
       history.forEach((entry: HistoryEntry) => {
         let correctVoters: string[] = [];
         try {
@@ -177,34 +193,57 @@ export default function GameSummary() {
         }
 
         correctVoters.forEach(voterName => {
-          const existing = voterStats.get(voterName);
-          if (existing) {
-            existing.correct += 1;
-            existing.total += 1;
-          } else {
-            voterStats.set(voterName, { name: voterName, correct: 1, total: 1 });
-          }
+          voterCorrectCount.set(voterName, (voterCorrectCount.get(voterName) || 0) + 1);
         });
       });
 
-      const voterArray = Array.from(voterStats.values());
+      // Count total votes per person, excluding votes on their own package
+      if (allVotes) {
+        allVotes.forEach(vote => {
+          if (!vote.voter_name) return;
+          
+          // Get whose package was being voted on
+          const sessionParticipantId = sessionParticipantMap.get(vote.session_id || '');
+          const packageOwnerName = sessionParticipantId ? participantMap.get(sessionParticipantId) : null;
+          
+          // Skip if voting on own package
+          if (packageOwnerName === vote.voter_name) return;
+          
+          voterTotalCount.set(vote.voter_name, (voterTotalCount.get(vote.voter_name) || 0) + 1);
+        });
+      }
+
+      // Also count from history for more accurate totals
+      // Each correct vote is also a total vote
+      voterCorrectCount.forEach((count, name) => {
+        const current = voterTotalCount.get(name) || 0;
+        if (current < count) {
+          voterTotalCount.set(name, count);
+        }
+      });
+
+      const voterArray: VoterStat[] = [];
+      voterTotalCount.forEach((total, name) => {
+        const correct = voterCorrectCount.get(name) || 0;
+        if (total > 0) {
+          voterArray.push({
+            name,
+            correctVotes: correct,
+            totalVotes: total,
+            percentage: Math.round((correct / total) * 100),
+          });
+        }
+      });
+
       if (voterArray.length > 0) {
         voterArray.sort((a, b) => {
-          const aPercentage = a.correct / a.total;
-          const bPercentage = b.correct / b.total;
-          if (bPercentage !== aPercentage) {
-            return bPercentage - aPercentage;
+          if (b.percentage !== a.percentage) {
+            return b.percentage - a.percentage;
           }
-          return b.correct - a.correct;
+          return b.correctVotes - a.correctVotes;
         });
         
-        const best = voterArray[0];
-        setBestVoter({
-          name: best.name,
-          correctVotes: best.correct,
-          totalVotes: best.total,
-          percentage: Math.round((best.correct / best.total) * 100),
-        });
+        setBestVoter(voterArray[0]);
       }
 
       setLoading(false);

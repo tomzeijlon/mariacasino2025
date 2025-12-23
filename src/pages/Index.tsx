@@ -13,7 +13,7 @@ export default function Index() {
         <div className="mb-16">
           <Gift className="w-20 h-20 mx-auto text-gold animate-float mb-6" />
           <h1 className="font-display text-5xl md:text-7xl text-gradient-gold mb-6">
-            Julklappslek
+            🎰 Maria Casino
           </h1>
           <p className="text-xl md:text-2xl text-muted-foreground max-w-2xl mx-auto">
             Vem köpte paketet egentligen? 
