@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useVoting } from '@/hooks/useVoting';
+import { useSoundEffects } from '@/hooks/useSoundEffects';
 import { Snowfall } from '@/components/Snowfall';
 import { VoteChart } from '@/components/VoteChart';
 import { ParticipantManager } from '@/components/ParticipantManager';
@@ -7,14 +8,18 @@ import { VotingHistory } from '@/components/VotingHistory';
 import { AdminPasswordGate } from '@/components/AdminPasswordGate';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { RefreshCw, StopCircle, Gift, Users, BarChart3, History, RotateCcw, Trophy, SkipForward } from 'lucide-react';
+import { RefreshCw, StopCircle, Gift, Users, BarChart3, History, RotateCcw, Trophy, SkipForward, UserX } from 'lucide-react';
 import { toast } from 'sonner';
 import { Link, useNavigate } from 'react-router-dom';
+import { QRCodeSVG } from 'qrcode.react';
 
 export default function Admin() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
     return sessionStorage.getItem('admin_authenticated') === 'true';
   });
+  const [showResults, setShowResults] = useState(false);
+  const prevVoteCount = useRef(0);
+  const { playAllVoted, playLocked } = useSoundEffects();
   const navigate = useNavigate();
 
   const {
@@ -42,9 +47,34 @@ export default function Admin() {
   const currentParticipant = getCurrentParticipant();
   const voteCounts = getVoteCounts();
   const totalVotes = votes.length;
+  const totalVotersExpected = participants.filter(p => !p.is_locked).length;
+  const allVoted = totalVotes >= totalVotersExpected && totalVotersExpected > 0;
+
+  // Get voters who haven't voted yet
+  const voterNames = votes.map(v => v.voter_name).filter(Boolean);
+  const uniqueVoterNames = [...new Set(voterNames)];
+  const missingVoters = totalVotersExpected - uniqueVoterNames.length;
+
+  // Play sound when all voted
+  useEffect(() => {
+    if (session?.is_active && allVoted && prevVoteCount.current < totalVotersExpected) {
+      playAllVoted();
+      setShowResults(true);
+    }
+    prevVoteCount.current = totalVotes;
+  }, [allVoted, session?.is_active, playAllVoted, totalVotes, totalVotersExpected]);
+
+  // Reset showResults when new voting starts
+  useEffect(() => {
+    if (session?.is_active) {
+      setShowResults(false);
+      prevVoteCount.current = 0;
+    }
+  }, [session?.id]);
 
   const handleReset = async () => {
     await resetVoting();
+    setShowResults(false);
     toast.success('Röstningen har nollställts');
   };
 
@@ -57,7 +87,16 @@ export default function Admin() {
     toast.success('Omröstningen har avslutats');
   };
 
+  const handleLockParticipant = async (id: string) => {
+    const { error } = await lockParticipant(id);
+    if (!error) {
+      playLocked();
+    }
+    return { error };
+  };
+
   const handleStartNextVoting = async () => {
+    setShowResults(false);
     if (session?.is_active && currentParticipant) {
       // End current voting first with the winner
       const winner = voteCounts[0];
@@ -90,9 +129,7 @@ export default function Admin() {
     navigate('/summary');
   };
 
-  const handleTogglePackage = async (participantId: string, hasPackage: boolean) => {
-    await setHasReceivedPackage(participantId, !hasPackage);
-  };
+  const voteUrl = `${window.location.origin}/vote`;
 
   if (!isAuthenticated) {
     return <AdminPasswordGate onSuccess={() => setIsAuthenticated(true)} />;
@@ -111,13 +148,13 @@ export default function Admin() {
   }
 
   return (
-    <div className="min-h-screen gradient-festive relative">
+    <div className="min-h-screen gradient-festive relative overflow-hidden">
       <Snowfall />
       
-      <div className="relative z-10 container mx-auto px-4 py-6">
-        {/* Header */}
-        <header className="text-center mb-8">
-          <h1 className="font-display text-3xl md:text-5xl text-gradient-gold mb-3">
+      <div className="relative z-10 container mx-auto px-4 py-4">
+        {/* Header - compact */}
+        <header className="text-center mb-4">
+          <h1 className="font-display text-2xl md:text-4xl text-gradient-gold mb-2">
             🎰 Maria Casino Admin
           </h1>
           <div className="flex flex-wrap gap-2 justify-center">
@@ -137,21 +174,21 @@ export default function Admin() {
           </div>
         </header>
 
-        <div className="grid lg:grid-cols-2 gap-6 max-w-6xl mx-auto">
+        <div className="grid lg:grid-cols-3 gap-4 max-w-7xl mx-auto">
           {/* Participants Management */}
           <Card className="bg-card/80 backdrop-blur border-border">
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 font-display text-xl">
-                <Users className="w-5 h-5 text-gold" />
+            <CardHeader className="pb-2 py-2">
+              <CardTitle className="flex items-center gap-2 font-display text-lg">
+                <Users className="w-4 h-4 text-gold" />
                 Deltagare ({participants.length})
               </CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="py-2">
               <ParticipantManager
                 participants={participants}
                 onAdd={addParticipant}
                 onRemove={removeParticipant}
-                onLock={lockParticipant}
+                onLock={handleLockParticipant}
                 onUnlock={unlockParticipant}
                 onStartVoting={startVoting}
                 onUpdateOrder={updateParticipantOrder}
@@ -163,36 +200,57 @@ export default function Admin() {
 
           {/* Voting Results */}
           <Card className="bg-card/80 backdrop-blur border-border">
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 font-display text-xl">
-                <BarChart3 className="w-5 h-5 text-gold" />
+            <CardHeader className="pb-2 py-2">
+              <CardTitle className="flex items-center gap-2 font-display text-lg">
+                <BarChart3 className="w-4 h-4 text-gold" />
                 Röstningsresultat
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-3 py-2">
               {/* Current voting info */}
               {currentParticipant ? (
-                <div className="p-3 rounded-xl bg-primary/20 border border-primary">
-                  <p className="text-xs text-muted-foreground mb-1">Pågående omröstning:</p>
-                  <p className="font-display text-xl text-gradient-gold">
+                <div className="p-2 rounded-lg bg-primary/20 border border-primary">
+                  <p className="text-xs text-muted-foreground">Pågående omröstning:</p>
+                  <p className="font-display text-lg text-gradient-gold">
                     {currentParticipant.name}s paket
                   </p>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    {totalVotes} {totalVotes === 1 ? 'röst' : 'röster'}
+                  <p className="text-sm text-muted-foreground">
+                    {totalVotes}/{totalVotersExpected} röster
                   </p>
                 </div>
               ) : (
-                <div className="p-3 rounded-xl bg-muted border border-border">
+                <div className="p-2 rounded-lg bg-muted border border-border">
                   <p className="text-muted-foreground text-center text-sm">
                     Ingen omröstning pågår
                   </p>
                 </div>
               )}
 
-              {/* Results chart */}
+              {/* Who hasn't voted */}
+              {session?.is_active && missingVoters > 0 && (
+                <div className="p-2 rounded-lg bg-gold/10 border border-gold/30">
+                  <div className="flex items-center gap-2 text-gold text-sm">
+                    <UserX className="w-4 h-4" />
+                    <span>{missingVoters} saknar röst</span>
+                  </div>
+                  {uniqueVoterNames.length > 0 && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Röstat: {uniqueVoterNames.join(', ')}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Results chart - only show when showResults or voting ended */}
               {session?.is_active && (
                 <>
-                  <VoteChart voteCounts={voteCounts} totalVotes={totalVotes} />
+                  {showResults ? (
+                    <VoteChart voteCounts={voteCounts} totalVotes={totalVotes} />
+                  ) : (
+                    <div className="py-4 text-center text-muted-foreground text-sm">
+                      Resultat visas när alla röstat...
+                    </div>
+                  )}
                   
                   {/* Control buttons */}
                   <div className="flex gap-2 pt-2">
@@ -202,8 +260,17 @@ export default function Admin() {
                       className="flex-1"
                       size="sm"
                     >
-                      <RefreshCw className="w-4 h-4 mr-1" />
+                      <RefreshCw className="w-3 h-3 mr-1" />
                       Nollställ
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => setShowResults(true)}
+                      className="flex-1"
+                      size="sm"
+                      disabled={showResults}
+                    >
+                      Visa
                     </Button>
                     <Button
                       variant="festive"
@@ -211,7 +278,7 @@ export default function Admin() {
                       className="flex-1"
                       size="sm"
                     >
-                      <SkipForward className="w-4 h-4 mr-1" />
+                      <SkipForward className="w-3 h-3 mr-1" />
                       Nästa
                     </Button>
                     <Button
@@ -220,29 +287,43 @@ export default function Admin() {
                       className="flex-1"
                       size="sm"
                     >
-                      <StopCircle className="w-4 h-4 mr-1" />
-                      Avsluta
+                      <StopCircle className="w-3 h-3" />
                     </Button>
                   </div>
                 </>
               )}
             </CardContent>
           </Card>
-        </div>
 
-        {/* Voting History */}
-        <div className="max-w-6xl mx-auto mt-6">
-          <Card className="bg-card/80 backdrop-blur border-border">
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 font-display text-xl">
-                <History className="w-5 h-5 text-gold" />
-                Röstningshistorik
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <VotingHistory />
-            </CardContent>
-          </Card>
+          {/* QR Code + History */}
+          <div className="space-y-4">
+            {/* QR Code */}
+            <Card className="bg-card/80 backdrop-blur border-border">
+              <CardHeader className="pb-2 py-2">
+                <CardTitle className="font-display text-lg text-center">
+                  📱 Skanna för att rösta
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="flex justify-center py-2">
+                <div className="bg-background p-3 rounded-lg">
+                  <QRCodeSVG value={voteUrl} size={120} />
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Voting History */}
+            <Card className="bg-card/80 backdrop-blur border-border">
+              <CardHeader className="pb-2 py-2">
+                <CardTitle className="flex items-center gap-2 font-display text-lg">
+                  <History className="w-4 h-4 text-gold" />
+                  Historik
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="py-2 max-h-[250px] overflow-y-auto">
+                <VotingHistory />
+              </CardContent>
+            </Card>
+          </div>
         </div>
       </div>
     </div>

@@ -157,7 +157,7 @@ export function ParticipantManager({
           items={participants.map(p => p.id)}
           strategy={verticalListSortingStrategy}
         >
-          <div className="space-y-1.5 max-h-[400px] overflow-y-auto">
+          <div className="space-y-1">
             {participants.map((participant) => (
               <SortableParticipant
                 key={participant.id}
