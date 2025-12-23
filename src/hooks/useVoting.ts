@@ -124,21 +124,19 @@ export function useVoting() {
     return { error };
   }, []);
 
-  // Lock participant (correct answer found) - now saves locked_participant_id for "best voter" stats
+  // Lock participant (correct answer found) - saves locked_participant_id for "best voter" stats
   const lockParticipant = useCallback(async (id: string) => {
     // When locking, we save who the correct owner is (the locked person)
     // This is used at game end to calculate "best voter" statistics
-    if (session?.id && session.current_participant_id) {
-      // Update all voting_history entries for this package to record the final locked owner
-      await supabase
-        .from('voting_history')
-        .update({ locked_participant_id: id })
-        .eq('package_owner_id', session.current_participant_id);
-    }
+    // We update ALL voting_history entries where participant_id = id (all rounds for this person's package)
+    await supabase
+      .from('voting_history')
+      .update({ locked_participant_id: id })
+      .eq('participant_id', id);
     
     const { error } = await supabase.from('participants').update({ is_locked: true }).eq('id', id);
     return { error };
-  }, [session]);
+  }, []);
 
   // Unlock participant
   const unlockParticipant = useCallback(async (id: string) => {
