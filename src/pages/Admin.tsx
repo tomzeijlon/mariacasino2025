@@ -92,6 +92,12 @@ export default function Admin() {
   };
 
   const handleEnd = async () => {
+    // Don't allow ending if there's a tie - must do tiebreaker first
+    if (tiedCandidates) {
+      toast.error('Lika röstetal! Starta omröstning mellan de bundna först.');
+      return;
+    }
+    
     const winner = voteCounts[0];
     if (winner && currentParticipant) {
       await markVotingComplete(currentParticipant.id, winner.participantId);
