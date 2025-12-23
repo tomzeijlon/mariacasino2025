@@ -38,7 +38,7 @@ export function SortableParticipant({
     <div
       ref={setNodeRef}
       style={style}
-      className={`flex items-center gap-2 p-3 rounded-xl border transition-all duration-300 ${
+      className={`flex items-center gap-2 p-2 rounded-lg border transition-all duration-300 ${
         participant.is_locked
           ? 'bg-forest/20 border-forest/50'
           : currentVotingId === participant.id

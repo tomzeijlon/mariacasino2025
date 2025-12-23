@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useVoting } from '@/hooks/useVoting';
 import { Snowfall } from '@/components/Snowfall';
 import { VotingPanel } from '@/components/VotingPanel';
 import { VoterNameGate } from '@/components/VoterNameGate';
+import { VoteCountdown } from '@/components/VoteCountdown';
 import { Gift } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -58,21 +59,23 @@ export default function Vote() {
     <div className="min-h-screen gradient-festive relative">
       <Snowfall speed={isOneVoteAway ? 'fast' : 'normal'} />
       
-      <div className="relative z-10 container mx-auto px-4 py-6">
+      <div className="relative z-10 container mx-auto px-4 py-4">
         {/* Header */}
-        <header className="text-center mb-8">
-          <h1 className="font-display text-3xl md:text-4xl text-gradient-gold mb-2">
+        <header className="text-center mb-4">
+          <h1 className="font-display text-2xl md:text-4xl text-gradient-gold mb-1">
             🎰 Maria Casino
           </h1>
-          <p className="text-muted-foreground">
+          <p className="text-muted-foreground text-sm">
             Hej {voterName}! Vem borde ha paketet?
           </p>
-          {isOneVoteAway && (
-            <p className="text-gold text-sm mt-2 animate-pulse">
-              ⏳ Bara en röst kvar!
-            </p>
-          )}
         </header>
+
+        {/* Countdown when one vote away */}
+        {isOneVoteAway && (
+          <div className="max-w-md mx-auto mb-4">
+            <VoteCountdown isActive={isOneVoteAway} duration={30} />
+          </div>
+        )}
 
         {/* Voting panel */}
         <div className="max-w-md mx-auto">

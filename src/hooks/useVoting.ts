@@ -390,14 +390,24 @@ export function useVoting() {
 
   // Mark participant as having finished voting and handle package swap
   const markVotingComplete = useCallback(async (participantId: string, winnerId: string) => {
-    // Winner gets the package - marked with has_received_package
-    await supabase
-      .from('participants')
-      .update({ has_received_package: true })
-      .eq('id', winnerId);
+    // If the winner is different from the current package holder:
+    // - Winner gets marked with has_received_package = true
+    // - Previous package holder (participantId) LOSES their has_received_package marker
+    //   because they now receive winner's old package randomly, not via voting
     
-    // Note: The previous holder (participantId) gets winner's old package 
-    // but this is NOT marked since it wasn't voted for
+    if (participantId !== winnerId) {
+      // Winner gets the package - marked with has_received_package
+      await supabase
+        .from('participants')
+        .update({ has_received_package: true })
+        .eq('id', winnerId);
+      
+      // Previous holder loses their marker (they get a random package, not voted)
+      await supabase
+        .from('participants')
+        .update({ has_received_package: false })
+        .eq('id', participantId);
+    }
     
     // Mark participant as having finished voting
     await supabase
