@@ -125,18 +125,22 @@ export function useVoting() {
   }, []);
 
   // Lock participant (correct answer found) - saves locked_participant_id for "best voter" stats
-  const lockParticipant = useCallback(async (id: string) => {
+  const lockParticipant = useCallback(async (id: string, packageOwnerId?: string) => {
     // When locking, we save who the correct owner is (the locked person)
     // This is used at game end to calculate "best voter" statistics
-    // We update ALL voting_history entries where participant_id = id (all rounds for this person's package)
+    // packageOwnerId is the person whose package was being voted on (from session.current_participant_id)
+    // id is the person being locked as the correct owner
+    
+    // Update all voting_history entries for this package to record who was finally locked as owner
+    const ownerToUpdate = packageOwnerId || session?.current_participant_id || id;
     await supabase
       .from('voting_history')
       .update({ locked_participant_id: id })
-      .eq('participant_id', id);
+      .eq('participant_id', ownerToUpdate);
     
     const { error } = await supabase.from('participants').update({ is_locked: true }).eq('id', id);
     return { error };
-  }, []);
+  }, [session]);
 
   // Unlock participant
   const unlockParticipant = useCallback(async (id: string) => {
