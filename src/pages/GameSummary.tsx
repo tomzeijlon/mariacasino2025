@@ -72,14 +72,31 @@ export default function GameSummary() {
       const participantMap = new Map(participants.map(p => [p.id, p.name]));
 
       // Calculate participant stats (easiest/hardest to guess)
-      // We track stats per locked_participant_id (the actual correct owner)
+      // We use participant_id (the original package owner) since locked_participant_id may be null
+      // We also find who is currently locked to include those stats
+      const lockedParticipants = participants.filter(p => p.is_locked);
       const participantStats = new Map<string, ParticipantStat>();
       
+      // Initialize stats for locked participants
+      lockedParticipants.forEach(p => {
+        participantStats.set(p.id, {
+          id: p.id,
+          name: p.name,
+          totalVotes: 0,
+          wrongVotes: 0,
+          roundCount: 0,
+        });
+      });
+      
       history.forEach((entry: HistoryEntry) => {
-        const lockedId = entry.locked_participant_id;
-        if (!lockedId) return; // Skip if not yet locked
+        // Use participant_id as the package owner being voted on
+        const packageOwnerId = entry.participant_id;
+        if (!packageOwnerId) return;
+        
+        // Only count for participants who are locked (confirmed correct owner)
+        if (!lockedParticipants.some(p => p.id === packageOwnerId)) return;
 
-        const name = participantMap.get(lockedId) || 'Okänd';
+        const name = participantMap.get(packageOwnerId) || 'Okänd';
         
         let results: VoteCount[] = [];
         try {
@@ -93,18 +110,18 @@ export default function GameSummary() {
         }
 
         const totalVotes = results.reduce((sum, r) => sum + r.count, 0);
-        // Correct votes are votes for the person who was locked as the correct owner
-        const correctVotes = results.find(r => r.participantId === lockedId)?.count || 0;
+        // Correct votes are votes for the package owner (they are the real owner since they're locked)
+        const correctVotes = results.find(r => r.participantId === packageOwnerId)?.count || 0;
         const wrongVotes = totalVotes - correctVotes;
 
-        const existing = participantStats.get(lockedId);
+        const existing = participantStats.get(packageOwnerId);
         if (existing) {
           existing.totalVotes += totalVotes;
           existing.wrongVotes += wrongVotes;
           existing.roundCount += 1;
         } else {
-          participantStats.set(lockedId, {
-            id: lockedId,
+          participantStats.set(packageOwnerId, {
+            id: packageOwnerId,
             name,
             totalVotes,
             wrongVotes,
@@ -165,19 +182,19 @@ export default function GameSummary() {
         }
       }
 
-      // Find best voter - FIXED: compare votes against locked_participant_id, not vote winner
-      // correct_voters now stores {voterName: votedForParticipantId}
-      // We need to check if votedForParticipantId matches locked_participant_id
+      // Find best voter - compare votes against the package owner (participant_id)
+      // Only count rounds where the package owner is now locked (confirmed correct)
       const voterCorrectCount = new Map<string, number>();
       const voterTotalCount = new Map<string, number>();
       
       history.forEach((entry: HistoryEntry) => {
-        const lockedId = entry.locked_participant_id;
-        if (!lockedId) return; // Skip if no one was locked yet
+        const packageOwnerId = entry.participant_id;
+        if (!packageOwnerId) return;
         
-        const packageOwnerName = entry.package_owner_id 
-          ? participantMap.get(entry.package_owner_id) 
-          : null;
+        // Only count rounds for locked participants (confirmed correct owners)
+        if (!lockedParticipants.some(p => p.id === packageOwnerId)) return;
+        
+        const packageOwnerName = participantMap.get(packageOwnerId) || null;
         
         let voterVotes: Record<string, string> = {};
         try {
@@ -198,8 +215,8 @@ export default function GameSummary() {
           // Count total votes
           voterTotalCount.set(voterName, (voterTotalCount.get(voterName) || 0) + 1);
           
-          // Count correct votes (voted for person who was eventually locked)
-          if (votedForId === lockedId) {
+          // Count correct votes (voted for the package owner - who we know is correct since they're locked)
+          if (votedForId === packageOwnerId) {
             voterCorrectCount.set(voterName, (voterCorrectCount.get(voterName) || 0) + 1);
           }
         });
