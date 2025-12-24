@@ -28,7 +28,7 @@ export default function Vote() {
   const currentVote = getCurrentVote();
   
   // Calculate if we're one vote away from complete
-  const totalVotersExpected = participants.filter(p => !p.is_locked).length;
+  const totalVotersExpected = participants.length;
   const currentVoteCount = votes.length;
   const isOneVoteAway = currentVoteCount === totalVotersExpected - 1 && totalVotersExpected > 1;
 

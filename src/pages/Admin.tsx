@@ -50,7 +50,7 @@ export default function Admin() {
   const voteCounts = getVoteCounts();
   const tiebreakerCandidates = getTiebreakerCandidates();
   const totalVotes = votes.length;
-  const totalVotersExpected = participants.filter(p => !p.is_locked).length;
+  const totalVotersExpected = participants.length;
   const allVoted = totalVotes >= totalVotersExpected && totalVotersExpected > 0;
 
   // Check for tie
