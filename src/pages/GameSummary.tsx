@@ -186,7 +186,12 @@ export default function GameSummary() {
       });
       
       console.log('=== BEST VOTER CALCULATION DEBUG ===');
-      console.log('Package to correct owner mapping:', Object.fromEntries(packageToCorrectOwner));
+      console.log('All history entries:', history.length);
+      console.log('Participant map:', Object.fromEntries(participantMap));
+      console.log('Package to correct owner mapping:');
+      packageToCorrectOwner.forEach((correctOwner, packageOwner) => {
+        console.log(`  Package by ${participantMap.get(packageOwner)} -> correct owner: ${participantMap.get(correctOwner)}`);
+      });
       
       const voterCorrectCount = new Map<string, number>();
       const voterTotalCount = new Map<string, number>();
@@ -195,19 +200,23 @@ export default function GameSummary() {
       let totalVotesProcessed = 0;
       let totalCorrectVotes = 0;
       
-      history.forEach((entry: HistoryEntry) => {
+      history.forEach((entry: HistoryEntry, index: number) => {
         const packageOwnerId = entry.package_owner_id;
-        if (!packageOwnerId) return;
+        if (!packageOwnerId) {
+          console.log(`Round ${index + 1}: Skipping - no package_owner_id`);
+          return;
+        }
         
         // Get the correct owner from the final locked round for this package
         const correctOwnerId = packageToCorrectOwner.get(packageOwnerId);
         if (!correctOwnerId) {
-          console.log(`Skipping round - no locked owner found for package: ${packageOwnerId}`);
+          console.log(`Round ${index + 1}: Skipping - no locked owner found for package by ${participantMap.get(packageOwnerId)}`);
           return; // Skip if package was never locked
         }
         
         // Get the name of the package owner (to exclude their votes on their own package)
         const packageOwnerName = participantMap.get(packageOwnerId);
+        const correctOwnerName = participantMap.get(correctOwnerId);
         
         let voterVotes: Record<string, string> = {};
         try {
@@ -223,11 +232,19 @@ export default function GameSummary() {
         totalRoundsProcessed++;
         const roundVoterCount = Object.keys(voterVotes).length;
         
+        console.log(`\n--- Round ${index + 1}: Package by ${packageOwnerName}, move_count: ${entry.move_count} ---`);
+        console.log(`  Correct owner for this package: ${correctOwnerName} (${correctOwnerId})`);
+        console.log(`  Voters in this round: ${roundVoterCount}`);
+        
+        let roundCorrectVotes = 0;
+        
         // For each voter in this round
         Object.entries(voterVotes).forEach(([voterName, votedForId]) => {
+          const votedForName = participantMap.get(votedForId) || 'UNKNOWN';
+          
           // Exclude votes on own package (if voter is the package owner)
           if (packageOwnerName && voterName === packageOwnerName) {
-            console.log(`  Excluding self-vote: ${voterName} voted on their own package`);
+            console.log(`    ${voterName} -> ${votedForName} (EXCLUDED - own package)`);
             return;
           }
           
@@ -237,16 +254,20 @@ export default function GameSummary() {
           voterTotalCount.set(voterName, (voterTotalCount.get(voterName) || 0) + 1);
           
           // Count correct votes (voted for the person who was eventually locked as correct owner)
-          if (votedForId === correctOwnerId) {
+          const isCorrect = votedForId === correctOwnerId;
+          if (isCorrect) {
             voterCorrectCount.set(voterName, (voterCorrectCount.get(voterName) || 0) + 1);
             totalCorrectVotes++;
+            roundCorrectVotes++;
           }
+          
+          console.log(`    ${voterName} -> ${votedForName} ${isCorrect ? '✓ CORRECT' : '✗ wrong'}`);
         });
         
-        console.log(`Round for package ${packageOwnerName}: ${roundVoterCount} voters, correct owner: ${participantMap.get(correctOwnerId)}`);
+        console.log(`  Round summary: ${roundCorrectVotes} correct votes out of ${roundVoterCount}`);
       });
       
-      console.log('=== SUMMARY ===');
+      console.log('\n=== FINAL SUMMARY ===');
       console.log(`Total rounds processed: ${totalRoundsProcessed}`);
       console.log(`Total votes processed: ${totalVotesProcessed}`);
       console.log(`Total correct votes: ${totalCorrectVotes}`);
