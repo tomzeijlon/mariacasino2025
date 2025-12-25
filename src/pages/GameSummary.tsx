@@ -171,14 +171,19 @@ export default function GameSummary() {
       }
 
       // Find best voters - compare votes against locked_participant_id (confirmed correct owner)
+      // Each round is counted separately. A vote is "correct" if the person voted for 
+      // the one who was finally locked as the correct owner of the package.
+      // Votes on one's own package should be excluded (where voterName is the package owner).
       const voterCorrectCount = new Map<string, number>();
       const voterTotalCount = new Map<string, number>();
       
       history.forEach((entry: HistoryEntry) => {
         const correctOwnerId = entry.locked_participant_id;
+        const packageOwnerId = entry.package_owner_id;
         if (!correctOwnerId) return; // Skip if we don't know correct owner
         
-        const correctOwnerName = participantMap.get(correctOwnerId) || null;
+        // Get the name of the package owner (to exclude their votes on their own package)
+        const packageOwnerName = packageOwnerId ? participantMap.get(packageOwnerId) : null;
         
         let voterVotes: Record<string, string> = {};
         try {
@@ -193,8 +198,8 @@ export default function GameSummary() {
 
         // For each voter in this round
         Object.entries(voterVotes).forEach(([voterName, votedForId]) => {
-          // Exclude votes on own package (if voter is the correct owner)
-          if (voterName === correctOwnerName) return;
+          // Exclude votes on own package (if voter is the package owner)
+          if (packageOwnerName && voterName === packageOwnerName) return;
           
           // Count total votes
           voterTotalCount.set(voterName, (voterTotalCount.get(voterName) || 0) + 1);
