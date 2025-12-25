@@ -49,7 +49,7 @@ export default function GameSummary() {
   const [easiest, setEasiest] = useState<ParticipantStat | null>(null);
   const [hardest, setHardest] = useState<ParticipantStat | null>(null);
   const [mostMovedPackage, setMostMovedPackage] = useState<PackageStat | null>(null);
-  const [bestVoter, setBestVoter] = useState<VoterStat | null>(null);
+  const [topVoters, setTopVoters] = useState<VoterStat[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -72,31 +72,19 @@ export default function GameSummary() {
       const participantMap = new Map(participants.map(p => [p.id, p.name]));
 
       // Calculate participant stats (easiest/hardest to guess)
-      // We use participant_id (the original package owner) since locked_participant_id may be null
-      // We also find who is currently locked to include those stats
-      const lockedParticipants = participants.filter(p => p.is_locked);
+      // For each voting_history entry, we need to know:
+      // - locked_participant_id: the CONFIRMED correct owner of the package
+      // - participant_id: who the package was with at time of voting (may have moved)
+      // "Wrong votes" = votes for anyone OTHER than the locked_participant_id
+      
       const participantStats = new Map<string, ParticipantStat>();
       
-      // Initialize stats for locked participants
-      lockedParticipants.forEach(p => {
-        participantStats.set(p.id, {
-          id: p.id,
-          name: p.name,
-          totalVotes: 0,
-          wrongVotes: 0,
-          roundCount: 0,
-        });
-      });
-      
+      // Only count rounds where we know who the correct owner is (locked_participant_id is set)
       history.forEach((entry: HistoryEntry) => {
-        // Use participant_id as the package owner being voted on
-        const packageOwnerId = entry.participant_id;
-        if (!packageOwnerId) return;
+        const correctOwnerId = entry.locked_participant_id;
+        if (!correctOwnerId) return; // Skip if we don't know correct owner
         
-        // Only count for participants who are locked (confirmed correct owner)
-        if (!lockedParticipants.some(p => p.id === packageOwnerId)) return;
-
-        const name = participantMap.get(packageOwnerId) || 'Okänd';
+        const name = participantMap.get(correctOwnerId) || 'Okänd';
         
         let results: VoteCount[] = [];
         try {
@@ -110,18 +98,18 @@ export default function GameSummary() {
         }
 
         const totalVotes = results.reduce((sum, r) => sum + r.count, 0);
-        // Correct votes are votes for the package owner (they are the real owner since they're locked)
-        const correctVotes = results.find(r => r.participantId === packageOwnerId)?.count || 0;
+        // Correct votes = votes for the locked_participant_id (confirmed correct owner)
+        const correctVotes = results.find(r => r.participantId === correctOwnerId)?.count || 0;
         const wrongVotes = totalVotes - correctVotes;
 
-        const existing = participantStats.get(packageOwnerId);
+        const existing = participantStats.get(correctOwnerId);
         if (existing) {
           existing.totalVotes += totalVotes;
           existing.wrongVotes += wrongVotes;
           existing.roundCount += 1;
         } else {
-          participantStats.set(packageOwnerId, {
-            id: packageOwnerId,
+          participantStats.set(correctOwnerId, {
+            id: correctOwnerId,
             name,
             totalVotes,
             wrongVotes,
@@ -182,19 +170,15 @@ export default function GameSummary() {
         }
       }
 
-      // Find best voter - compare votes against the package owner (participant_id)
-      // Only count rounds where the package owner is now locked (confirmed correct)
+      // Find best voters - compare votes against locked_participant_id (confirmed correct owner)
       const voterCorrectCount = new Map<string, number>();
       const voterTotalCount = new Map<string, number>();
       
       history.forEach((entry: HistoryEntry) => {
-        const packageOwnerId = entry.participant_id;
-        if (!packageOwnerId) return;
+        const correctOwnerId = entry.locked_participant_id;
+        if (!correctOwnerId) return; // Skip if we don't know correct owner
         
-        // Only count rounds for locked participants (confirmed correct owners)
-        if (!lockedParticipants.some(p => p.id === packageOwnerId)) return;
-        
-        const packageOwnerName = participantMap.get(packageOwnerId) || null;
+        const correctOwnerName = participantMap.get(correctOwnerId) || null;
         
         let voterVotes: Record<string, string> = {};
         try {
@@ -209,14 +193,14 @@ export default function GameSummary() {
 
         // For each voter in this round
         Object.entries(voterVotes).forEach(([voterName, votedForId]) => {
-          // Exclude votes on own package
-          if (voterName === packageOwnerName) return;
+          // Exclude votes on own package (if voter is the correct owner)
+          if (voterName === correctOwnerName) return;
           
           // Count total votes
           voterTotalCount.set(voterName, (voterTotalCount.get(voterName) || 0) + 1);
           
-          // Count correct votes (voted for the package owner - who we know is correct since they're locked)
-          if (votedForId === packageOwnerId) {
+          // Count correct votes (voted for the locked_participant_id - confirmed correct owner)
+          if (votedForId === correctOwnerId) {
             voterCorrectCount.set(voterName, (voterCorrectCount.get(voterName) || 0) + 1);
           }
         });
@@ -243,7 +227,8 @@ export default function GameSummary() {
           return b.correctVotes - a.correctVotes;
         });
         
-        setBestVoter(voterArray[0]);
+        // Get top 3 voters
+        setTopVoters(voterArray.slice(0, 3));
       }
 
       setLoading(false);
@@ -352,23 +337,32 @@ export default function GameSummary() {
             </CardContent>
           </Card>
 
-          {/* Best voter */}
+          {/* Best voters - Top 3 */}
           <Card className="bg-card/80 backdrop-blur border-border">
             <CardHeader>
               <CardTitle className="flex items-center gap-2 font-display text-xl">
                 <Award className="w-6 h-6 text-gold" />
-                Bästa röstaren
+                Bästa röstarna
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {bestVoter ? (
-                <div className="text-center py-4">
-                  <p className="font-display text-3xl text-gradient-gold mb-2">
-                    {bestVoter.name}
-                  </p>
-                  <p className="text-muted-foreground">
-                    {bestVoter.correctVotes} rätt av {bestVoter.totalVotes} ({bestVoter.percentage}%)
-                  </p>
+              {topVoters.length > 0 ? (
+                <div className="space-y-4 py-2">
+                  {topVoters.map((voter, index) => (
+                    <div key={voter.name} className="flex items-center gap-3">
+                      <span className="text-2xl">
+                        {index === 0 ? '🥇' : index === 1 ? '🥈' : '🥉'}
+                      </span>
+                      <div className="flex-1">
+                        <p className={`font-display ${index === 0 ? 'text-2xl text-gradient-gold' : 'text-lg text-foreground'}`}>
+                          {voter.name}
+                        </p>
+                        <p className="text-sm text-muted-foreground">
+                          {voter.correctVotes} rätt av {voter.totalVotes} ({voter.percentage}%)
+                        </p>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               ) : (
                 <p className="text-muted-foreground text-center py-4">Ingen data</p>

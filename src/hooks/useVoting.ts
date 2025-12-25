@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 
 export interface Participant {
@@ -73,7 +73,14 @@ export function useVoting() {
     setLoading(false);
   }, []);
 
-  // Set up realtime subscriptions
+  // Use ref to track session ID for realtime without causing re-subscriptions
+  const sessionIdRef = useRef<string | null>(null);
+  
+  useEffect(() => {
+    sessionIdRef.current = session?.id || null;
+  }, [session?.id]);
+
+  // Set up realtime subscriptions - only subscribe once
   useEffect(() => {
     fetchData();
 
@@ -97,8 +104,10 @@ export function useVoting() {
         });
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'votes' }, () => {
-        if (session?.id) {
-          supabase.from('votes').select('*').eq('session_id', session.id).then(({ data }) => {
+        // Use ref to get current session ID without re-subscribing
+        const currentSessionId = sessionIdRef.current;
+        if (currentSessionId) {
+          supabase.from('votes').select('*').eq('session_id', currentSessionId).then(({ data }) => {
             if (data) setVotes(data);
           });
         }
@@ -108,7 +117,7 @@ export function useVoting() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [fetchData, session?.id]);
+  }, [fetchData]); // Removed session?.id dependency to prevent re-subscription
 
   // Add participant
   const addParticipant = useCallback(async (name: string) => {
@@ -464,14 +473,31 @@ export function useVoting() {
     // End current session (with history save)
     await endVoting(true, winnerId);
     
-    // Find next eligible participant (excluding current)
-    const next = getNextParticipant(currentParticipantId);
+    // Fetch fresh participant data to get updated has_received_package status
+    const { data: freshParticipants } = await supabase
+      .from('participants')
+      .select('*')
+      .order('sort_order', { ascending: true, nullsFirst: false });
     
-    if (next) {
-      // Start voting for next
-      await startVoting(next.id);
+    if (freshParticipants) {
+      // Find eligible participants (not locked, no voted package yet)
+      const eligible = freshParticipants.filter(p => 
+        !p.is_locked && !p.has_received_package
+      );
+      
+      if (eligible.length === 1) {
+        // Only one person left - auto-mark their package as voted
+        // since there's no one else to vote on it
+        await supabase
+          .from('participants')
+          .update({ has_received_package: true })
+          .eq('id', eligible[0].id);
+        // Don't start voting - game is effectively done
+      } else if (eligible.length > 1) {
+        await startVoting(eligible[0].id);
+      }
     }
-  }, [session, markVotingComplete, endVoting, getNextParticipant, startVoting]);
+  }, [session, markVotingComplete, endVoting, startVoting]);
 
   // Reset all game state except names
   const resetGame = useCallback(async () => {
