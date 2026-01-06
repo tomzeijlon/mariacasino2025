@@ -135,48 +135,22 @@ export function useVoting() {
 
   // Lock participant (correct answer found) - saves locked_participant_id for "best voter" stats
   const lockParticipant = useCallback(async (id: string) => {
-    // When locking participant X, we need to update all voting_history entries where X was voted as the winner
-    // This is tricky because voting_history stores participant_id (package owner), not winner
-    // The winner is stored in results JSON as the top vote-getter
+    // When locking participant X as the correct owner of their package:
+    // We need to update ALL voting_history entries where X's package was being voted on
+    // (package_owner_id = id) and set locked_participant_id = id
+    // This marks that X was confirmed as the correct owner of their own package
     
-    // Update all voting_history where this participant was the package owner (voted about)
-    // This covers the case where someone keeps their own package
-    await supabase
+    // Update all voting_history entries where this participant's package was being voted on
+    const { error: historyError } = await supabase
       .from('voting_history')
       .update({ locked_participant_id: id })
-      .eq('participant_id', id)
-      .is('locked_participant_id', null);
+      .eq('package_owner_id', id);
     
-    // Also update entries where this participant was voted to receive the package
-    // We need to find entries where the results show this person as the winner
-    // and the package then moved to them
-    const { data: allHistory } = await supabase
-      .from('voting_history')
-      .select('*')
-      .is('locked_participant_id', null);
-    
-    if (allHistory) {
-      for (const entry of allHistory) {
-        try {
-          const results = typeof entry.results === 'string' 
-            ? JSON.parse(entry.results) 
-            : entry.results;
-          
-          if (Array.isArray(results) && results.length > 0) {
-            // Check if this person was the winner (top vote getter)
-            const winner = results[0];
-            if (winner.participantId === id) {
-              await supabase
-                .from('voting_history')
-                .update({ locked_participant_id: id })
-                .eq('id', entry.id);
-            }
-          }
-        } catch {
-          // Skip entries with invalid results
-        }
-      }
+    if (historyError) {
+      console.error('Error updating voting_history with locked_participant_id:', historyError);
     }
+    
+    console.log(`Locked participant ${id} - updated all voting_history entries where package_owner_id = ${id}`);
     
     const { error } = await supabase.from('participants').update({ is_locked: true }).eq('id', id);
     return { error };
