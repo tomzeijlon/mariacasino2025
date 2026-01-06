@@ -93,6 +93,7 @@ export type Database = {
           id: string
           locked_participant_id: string | null
           move_count: number
+          original_package_owner_id: string | null
           package_owner_id: string | null
           participant_id: string | null
           results: Json
@@ -103,6 +104,7 @@ export type Database = {
           id?: string
           locked_participant_id?: string | null
           move_count?: number
+          original_package_owner_id?: string | null
           package_owner_id?: string | null
           participant_id?: string | null
           results: Json
@@ -113,6 +115,7 @@ export type Database = {
           id?: string
           locked_participant_id?: string | null
           move_count?: number
+          original_package_owner_id?: string | null
           package_owner_id?: string | null
           participant_id?: string | null
           results?: Json
@@ -121,6 +124,13 @@ export type Database = {
           {
             foreignKeyName: "voting_history_locked_participant_id_fkey"
             columns: ["locked_participant_id"]
+            isOneToOne: false
+            referencedRelation: "participants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "voting_history_original_package_owner_id_fkey"
+            columns: ["original_package_owner_id"]
             isOneToOne: false
             referencedRelation: "participants"
             referencedColumns: ["id"]
