@@ -219,16 +219,27 @@ export function useVoting() {
             }))
             .sort((a, b) => b.count - a.count);
 
-          // Get previous move count for this package
+          // Get previous history for this package to track original owner and move count
+          // First check if there's existing history where the winner is now the current holder
+          // This helps us trace the chain of package ownership
           const { data: existingHistory } = await supabase
             .from('voting_history')
-            .select('move_count')
+            .select('move_count, original_package_owner_id, package_owner_id')
             .eq('package_owner_id', session.current_participant_id)
             .order('created_at', { ascending: false })
             .limit(1);
 
-          const previousMoveCount = existingHistory?.[0]?.move_count || 0;
-          const isFirstVoting = !existingHistory || existingHistory.length === 0;
+          let originalPackageOwnerId = session.current_participant_id;
+          let previousMoveCount = 0;
+          let isFirstVoting = true;
+
+          if (existingHistory && existingHistory.length > 0) {
+            // This package has been voted on before
+            previousMoveCount = existingHistory[0].move_count || 0;
+            originalPackageOwnerId = existingHistory[0].original_package_owner_id || session.current_participant_id;
+            isFirstVoting = false;
+          }
+
           const isMoved = winnerId !== session.current_participant_id;
 
           // Save vote data per voter for later "best voter" calculation
@@ -243,8 +254,9 @@ export function useVoting() {
           await supabase.from('voting_history').insert({
             participant_id: session.current_participant_id,
             package_owner_id: session.current_participant_id,
+            original_package_owner_id: originalPackageOwnerId,
             results: JSON.stringify(voteCounts),
-            correct_voters: JSON.stringify(voterVotes), // Changed to store {voterName: votedForId}
+            correct_voters: JSON.stringify(voterVotes),
             move_count: isFirstVoting && isMoved ? 1 : (isMoved ? previousMoveCount + 1 : previousMoveCount),
           });
         }
