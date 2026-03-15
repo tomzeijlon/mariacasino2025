@@ -283,6 +283,26 @@ This project has no test suite (no Jest, Vitest, Cypress, etc.). It was scaffold
 
 ---
 
+## Known Bugs & Status
+
+| # | Description | Status |
+|---|-------------|--------|
+| 1 | **"Bästa röstare"-statistiken fel** — `lockParticipant` only updated history entries where `package_owner_id=id`, missing all earlier rounds where the package was held by someone else. | **FIXED** — `lockParticipant` now traces the full package chain backward (using `results[0]` to find who gave the package to whom) and updates all entries. |
+| 2 | **"Lättast paket"-statistiken fel** — Same root cause as #1; wrong votes were undercounted because many rounds were skipped. | **FIXED** — Same fix as #1. |
+| 3 | **"Har framröstat paket"-markering försvinner inte** — When package A→B, A should lose marker. | **Already fixed** in `markVotingComplete`: sets `has_received_package=false` on the previous holder when the package moves. |
+| 4 | **"Nästa röstning" väljer samma person** — After person A's package moves to B, the system re-selected A immediately instead of moving on to others. | **FIXED** — `endAndProceedToNext` now excludes the current participant when selecting the next vote target (only falls back to them if nobody else is eligible). |
+| 5 | **Automatiskt framröstat för sista personen** — When only one person lacks `has_received_package`, voting should be skipped. | **Already implemented** in `endAndProceedToNext` (`allEligible.length === 1` auto-marks). |
+| 6 | **Blinkande namn på röstsidan** | **Likely already fine** — Buttons use stable `key={participant.id}`; React won't remount them on re-renders. The `transition-all duration-300` only animates on actual variant changes. If blinking is still observed, investigate CSS transitions on the `vote` button variant. |
+
+---
+
+## Game Logic Notes
+
+- `lockParticipant(id)` traces the full package ownership chain: finds all `voting_history` entries where `id` (or any prior holder in the chain) held the package, then sets `locked_participant_id=id` on all of them. This enables correct "best voters" and "easiest package" statistics.
+- `endAndProceedToNext(winnerId)` auto-marks the last eligible participant (no vote needed when only one person is left), and prefers participants other than the just-voted-on person when selecting the next vote target.
+
+---
+
 ## Things to Avoid
 
 - Do not edit files in `src/components/ui/` manually — use shadcn CLI
