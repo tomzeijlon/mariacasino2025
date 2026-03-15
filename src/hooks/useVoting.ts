@@ -135,23 +135,78 @@ export function useVoting() {
 
   // Lock participant (correct answer found) - saves locked_participant_id for "best voter" stats
   const lockParticipant = useCallback(async (id: string) => {
-    // When locking participant X as the correct owner of their package:
-    // We need to update ALL voting_history entries where X's package was being voted on
-    // (package_owner_id = id) and set locked_participant_id = id
-    // This marks that X was confirmed as the correct owner of their own package
-    
-    // Update all voting_history entries where this participant's package was being voted on
-    const { error: historyError } = await supabase
+    // When locking participant X as the correct owner of their package, we need to update
+    // ALL voting_history entries for the entire package chain leading to X.
+    //
+    // The chain works like this: X's package might have been held by A → B → X before X was locked.
+    // Each round's history entry has package_owner_id = whoever held it at that time.
+    // lockParticipant must find ALL entries in the chain, not just those where package_owner_id=X.
+    //
+    // Algorithm: trace backward through "who won from whom":
+    //   1. Add all entries where X is the holder (package_owner_id=X)
+    //   2. Find entries where X won the package FROM someone else (results[0].participantId=X, package_owner_id!=X)
+    //   3. The previous holder is tracked as next node; repeat from step 1 for that holder
+
+    const { data: allHistory } = await supabase
       .from('voting_history')
-      .update({ locked_participant_id: id })
-      .eq('package_owner_id', id);
-    
-    if (historyError) {
-      console.error('Error updating voting_history with locked_participant_id:', historyError);
+      .select('id, package_owner_id, results');
+
+    const idsToUpdate: string[] = [];
+
+    if (allHistory) {
+      const processed = new Set<string>();
+      let currentWinners = new Set<string>([id]);
+
+      while (currentWinners.size > 0) {
+        const nextWinners = new Set<string>();
+
+        for (const winner of currentWinners) {
+          if (processed.has(winner)) continue;
+          processed.add(winner);
+
+          for (const entry of allHistory) {
+            if (entry.package_owner_id === winner) {
+              // This person was the holder in this round — include it
+              idsToUpdate.push(entry.id);
+            } else {
+              // Check if this winner won the package from a different holder
+              try {
+                const results = typeof entry.results === 'string'
+                  ? JSON.parse(entry.results)
+                  : entry.results;
+                if (Array.isArray(results) && results[0]?.participantId === winner) {
+                  // winner won this round (from entry.package_owner_id)
+                  idsToUpdate.push(entry.id);
+                  if (entry.package_owner_id) {
+                    nextWinners.add(entry.package_owner_id);
+                  }
+                }
+              } catch {
+                // skip unparseable results
+              }
+            }
+          }
+        }
+
+        currentWinners = nextWinners;
+      }
     }
-    
-    console.log(`Locked participant ${id} - updated all voting_history entries where package_owner_id = ${id}`);
-    
+
+    const uniqueIds = [...new Set(idsToUpdate)];
+
+    if (uniqueIds.length > 0) {
+      const { error: historyError } = await supabase
+        .from('voting_history')
+        .update({ locked_participant_id: id })
+        .in('id', uniqueIds);
+
+      if (historyError) {
+        console.error('Error updating voting_history with locked_participant_id:', historyError);
+      }
+    }
+
+    console.log(`Locked participant ${id} - updated ${uniqueIds.length} history entries in chain`);
+
     const { error } = await supabase.from('participants').update({ is_locked: true }).eq('id', id);
     return { error };
   }, []);
@@ -467,20 +522,24 @@ export function useVoting() {
     
     if (freshParticipants) {
       // Find eligible participants (not locked, no voted package yet)
-      const eligible = freshParticipants.filter(p => 
+      const allEligible = freshParticipants.filter(p =>
         !p.is_locked && !p.has_received_package
       );
-      
-      if (eligible.length === 1) {
+
+      if (allEligible.length === 1) {
         // Only one person left - auto-mark their package as voted
-        // since there's no one else to vote on it
+        // since there's no one else to vote on it (Bug 5 fix)
         await supabase
           .from('participants')
           .update({ has_received_package: true })
-          .eq('id', eligible[0].id);
+          .eq('id', allEligible[0].id);
         // Don't start voting - game is effectively done
-      } else if (eligible.length > 1) {
-        await startVoting(eligible[0].id);
+      } else if (allEligible.length > 1) {
+        // Bug 4 fix: prefer someone other than the current participant
+        // (they just had their package voted on; give priority to others)
+        const others = allEligible.filter(p => p.id !== currentParticipantId);
+        const next = others.length > 0 ? others[0] : allEligible[0];
+        await startVoting(next.id);
       }
     }
   }, [session, markVotingComplete, endVoting, startVoting]);
