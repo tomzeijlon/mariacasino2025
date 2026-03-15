@@ -68,7 +68,7 @@ export function VotingPanel({
               key={participant.id}
               variant={isVotedFor ? 'festive' : 'vote'}
               size="sm"
-              className="h-auto py-3 px-2 flex-col gap-1 relative text-sm"
+              className="h-auto py-3 px-2 flex-col gap-1 relative text-sm transition-none"
               onClick={() => onVote(participant.id)}
             >
               {isVotedFor && (

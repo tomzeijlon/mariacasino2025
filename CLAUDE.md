@@ -6,11 +6,37 @@ This file describes the codebase structure, development conventions, and workflo
 
 ## Project Overview
 
-**Maria Casino** is a real-time Swedish Christmas gift-guessing game ("Julklappslek"). Players vote on who they think owns each gift package. The admin controls the game flow, and votes synchronize in real-time for all participants.
+**Maria Casino** is a real-time Swedish Christmas gift-guessing game ("Julklappslek"). Everyone buys a gift for themselves; packages are randomly distributed, and then the group votes on who should rightfully own each package. The admin controls the game flow on a shared screen (TV), participants vote on their phones.
 
 - **Language:** Swedish UI, English codebase
 - **Stack:** React 18 + TypeScript + Vite + Supabase + Tailwind CSS + shadcn/ui
 - **Deployment:** Lovable platform (git-based continuous deployment)
+
+---
+
+## Game Flow
+
+### Phase 1 — Attribution
+1. Admin adds ~10 participants
+2. Everyone starts with a randomly distributed package
+3. Admin starts a vote for one person's current package ("Vems paket borde det vara?")
+4. All participants vote on their phones
+5. Package moves to the winning candidate (if tie → tiebreaker round between tied candidates)
+6. Winner is marked `has_received_package = true`; the previous holder loses that flag (they now hold the winner's old package)
+7. Repeat until all participants have `has_received_package = true`
+8. If only one person remains without a package, it is automatically marked — no vote needed
+
+### Phase 2 — Verification & Locking
+9. Admin goes around: "Is this the right package?" — locks (`is_locked = true`) those confirmed correct
+10. For those that are wrong: start a new vote (steps 3–7 again)
+11. Once everyone is locked or the admin is satisfied, navigate to `/summary`
+
+### Key State Flags on `participants`
+| Flag | Meaning |
+|------|---------|
+| `has_received_package` | Currently holds a package that was voted to them |
+| `is_locked` | Confirmed correct owner of their current package |
+| `last_voted_at` | When this participant last had their package voted on |
 
 ---
 
@@ -254,7 +280,7 @@ Defined in `src/App.tsx` using React Router v6:
 | `/` | `Index` | Landing page |
 | `/vote` | `Vote` | Voter interface |
 | `/admin` | `Admin` | Admin dashboard (password gated) |
-| `/game-summary` | `GameSummary` | Post-game statistics |
+| `/summary` | `GameSummary` | Post-game statistics |
 | `*` | `NotFound` | 404 fallback |
 
 ---
@@ -291,3 +317,39 @@ This project has no test suite (no Jest, Vitest, Cypress, etc.). It was scaffold
 - Do not commit `.env` files with real credentials
 - Do not hardcode strings in Swedish without confirming copy with the product owner
 - Do not introduce new state management libraries without discussion — the current hooks + TanStack Query pattern is sufficient
+
+---
+
+## Known Bugs & Fix History
+
+### Fixed
+| Bug | Fix location | Notes |
+|-----|-------------|-------|
+| `has_received_package` not clearing on package move | `useVoting.ts` `markVotingComplete` | Winner gets `true`, previous holder gets `false` — already correct |
+| Last person not auto-completed | `useVoting.ts` `endAndProceedToNext` | When only 1 eligible remains, auto-marks without a vote — already correct |
+| Best voter stats wrong (bug 1) | `useVoting.ts` `lockParticipant` | Phase 1 rounds where the package was held by someone other than the eventual winner had no `locked_participant_id`. Fix: parse `results` JSON, find rounds where `X` won, and set `locked_participant_id = X` on those rows |
+| Easiest/hardest package stats wrong (bug 2) | Same fix as bug 1 | Same root cause — wrong votes were uncounted because Phase 1 rows lacked `locked_participant_id` |
+| "Next voting" stays on same person (bug 4) | `useVoting.ts` `endAndProceedToNext` | After package moves from A→B, A re-enters eligible list. Fix: prefer eligible participants other than `currentParticipantId` |
+| Blinking names on vote page (bug 6) | `VotingPanel.tsx` | CSS `transition-colors` on button caused visual flash on variant change during realtime updates. Fix: add `transition-none` to vote buttons |
+
+### `locked_participant_id` — how it works
+When admin locks participant X (confirmed correct owner):
+1. `lockParticipant(X.id)` fetches all unlocked history rows
+2. Parses each row's `results` JSON; if `results[0].participantId === X.id`, X won that round
+3. Sets `locked_participant_id = X.id` on those rows (Phase 1 rounds where someone else held the package)
+4. Also updates rows where `package_owner_id = X.id` (Phase 2 rounds)
+5. Sets `participants.is_locked = true` for X
+
+`GameSummary.tsx` then builds a map of `package_owner_id → locked_participant_id` across all history rows to calculate voter accuracy and wrong-vote counts.
+
+### Implemented features (verified working)
+- Tiebreaker vote between tied candidates
+- 30-second countdown when one vote away from completion
+- Snowfall speed increases when one vote is missing
+- Sound effects: pling when all voted, fanfare when locked
+- Results hidden during active vote (only count shown)
+- QR code on Admin page for vote URL
+- "Who hasn't voted" indicator on Admin
+- Voting history shows "Maria → Tom" (package journey)
+- Top 3 best voters on summary page
+- Compact 2-column layout on mobile for up to 10 participants
