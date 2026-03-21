@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useVoting } from '@/hooks/useVoting';
+import { useVoting, type ArchivedGame } from '@/hooks/useVoting';
 import { useSoundEffects } from '@/hooks/useSoundEffects';
 import { Snowfall } from '@/components/Snowfall';
 import { VoteChart } from '@/components/VoteChart';
@@ -8,7 +8,10 @@ import { VotingHistory } from '@/components/VotingHistory';
 import { AdminPasswordGate } from '@/components/AdminPasswordGate';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { RefreshCw, StopCircle, Gift, Users, BarChart3, History, RotateCcw, Trophy, SkipForward, UserX, Scale } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { RefreshCw, StopCircle, Gift, Users, BarChart3, History, RotateCcw, Trophy, SkipForward, UserX, Scale, Archive, ExternalLink } from 'lucide-react';
 import { toast } from 'sonner';
 import { Link, useNavigate } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
@@ -41,10 +44,21 @@ export default function Admin() {
     markVotingComplete,
     endAndProceedToNext,
     resetGame,
+    archiveGame,
+    fetchArchivedGames,
     startTiebreaker,
     clearTiebreaker,
     getTiebreakerCandidates,
   } = useVoting();
+
+  const [showArchiveDialog, setShowArchiveDialog] = useState(false);
+  const [archiveYear, setArchiveYear] = useState(new Date().getFullYear());
+  const [archiveLabel, setArchiveLabel] = useState('');
+  const [archivedGames, setArchivedGames] = useState<ArchivedGame[]>([]);
+
+  useEffect(() => {
+    fetchArchivedGames().then(setArchivedGames);
+  }, [fetchArchivedGames]);
 
   const currentParticipant = getCurrentParticipant();
   const voteCounts = getVoteCounts();
@@ -158,6 +172,22 @@ export default function Admin() {
     }
   };
 
+  const handleArchiveGame = async () => {
+    if (!archiveLabel.trim()) {
+      toast.error('Ange ett namn för arkivet');
+      return;
+    }
+    const { error } = await archiveGame(archiveYear, archiveLabel.trim());
+    if (error) {
+      toast.error('Kunde inte arkivera spelet');
+    } else {
+      toast.success(`Spelet "${archiveLabel}" (${archiveYear}) arkiverat!`);
+      setShowArchiveDialog(false);
+      setArchiveLabel('');
+      fetchArchivedGames().then(setArchivedGames);
+    }
+  };
+
   const handleResetGame = async () => {
     if (window.confirm('Är du säker på att du vill återställa hela spelet? Detta tar bort all historik men behåller deltagarnamnen.')) {
       await resetGame();
@@ -203,6 +233,10 @@ export default function Admin() {
                 Röstningssidan →
               </Button>
             </Link>
+            <Button variant="outline" size="sm" onClick={() => setShowArchiveDialog(true)}>
+              <Archive className="w-4 h-4 mr-1" />
+              Arkivera & nytt spel
+            </Button>
             <Button variant="outline" size="sm" onClick={handleResetGame}>
               <RotateCcw className="w-4 h-4 mr-1" />
               Återställ
@@ -359,7 +393,7 @@ export default function Admin() {
             </CardContent>
           </Card>
 
-          {/* QR Code + History */}
+          {/* QR Code + History + Archived Games */}
           <div className="space-y-4">
             {/* QR Code */}
             <Card className="bg-card/80 backdrop-blur border-border">
@@ -387,9 +421,87 @@ export default function Admin() {
                 <VotingHistory />
               </CardContent>
             </Card>
+
+            {/* Archived Games */}
+            {archivedGames.length > 0 && (
+              <Card className="bg-card/80 backdrop-blur border-border">
+                <CardHeader className="pb-2 py-2">
+                  <CardTitle className="flex items-center gap-2 font-display text-lg">
+                    <Archive className="w-4 h-4 text-gold" />
+                    Arkiverade spel
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="py-2 space-y-2">
+                  {archivedGames.map((game) => (
+                    <div key={game.id} className="flex items-center justify-between p-2 rounded-lg bg-card/50 border border-border text-sm">
+                      <div>
+                        <span className="font-display text-gold">{game.year}</span>
+                        <span className="text-muted-foreground ml-2">{game.label}</span>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-xs h-7 px-2"
+                        onClick={() => navigate(`/summary?gameId=${game.id}`)}
+                      >
+                        <ExternalLink className="w-3 h-3 mr-1" />
+                        Visa
+                      </Button>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
           </div>
         </div>
       </div>
+
+      {/* Archive Dialog */}
+      <Dialog open={showArchiveDialog} onOpenChange={setShowArchiveDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-display text-xl">
+              Arkivera & starta nytt spel
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-muted-foreground">
+              Spelet sparas i arkivet och kan visas igen när som helst. Deltagarnamnen behålls för nästa omgång.
+            </p>
+            <div className="space-y-2">
+              <Label htmlFor="archive-year">År</Label>
+              <Input
+                id="archive-year"
+                type="number"
+                value={archiveYear}
+                onChange={(e) => setArchiveYear(Number(e.target.value))}
+                min={2000}
+                max={2100}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="archive-label">Namn (t.ex. "Julafton hemma")</Label>
+              <Input
+                id="archive-label"
+                type="text"
+                placeholder="Julafton hemma"
+                value={archiveLabel}
+                onChange={(e) => setArchiveLabel(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleArchiveGame()}
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setShowArchiveDialog(false)}>
+              Avbryt
+            </Button>
+            <Button variant="festive" onClick={handleArchiveGame}>
+              <Archive className="w-4 h-4 mr-2" />
+              Arkivera
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

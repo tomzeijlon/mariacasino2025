@@ -33,6 +33,13 @@ export interface VoteCount {
   count: number;
 }
 
+export interface ArchivedGame {
+  id: string;
+  year: number;
+  label: string;
+  created_at: string;
+}
+
 export function useVoting() {
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [session, setSession] = useState<VotingSession | null>(null);
@@ -540,6 +547,74 @@ export function useVoting() {
     }
   }, [session, markVotingComplete, endVoting, startVoting]);
 
+  // Archive current game (tag all current history with an archived_game_id) then reset
+  const archiveGame = useCallback(async (year: number, label: string): Promise<{ error: Error | null }> => {
+    // 1. Create the archive record
+    const { data: archiveData, error: insertError } = await supabase
+      .from('archived_games')
+      .insert({ year, label })
+      .select()
+      .single();
+
+    if (insertError || !archiveData) {
+      return { error: insertError as Error };
+    }
+
+    // 2. Tag all current (unarchived) history rows
+    const { error: tagError } = await supabase
+      .from('voting_history')
+      .update({ archived_game_id: archiveData.id })
+      .is('archived_game_id', null);
+
+    if (tagError) return { error: tagError as Error };
+
+    // 3. Reset participant flags
+    await supabase
+      .from('participants')
+      .update({ is_locked: false, has_received_package: false, last_voted_at: null })
+      .neq('id', '00000000-0000-0000-0000-000000000000');
+
+    // 4. End any active session
+    await supabase
+      .from('voting_sessions')
+      .update({ is_active: false })
+      .eq('is_active', true);
+
+    // 5. Delete all votes
+    await supabase
+      .from('votes')
+      .delete()
+      .neq('id', '00000000-0000-0000-0000-000000000000');
+
+    setSession(null);
+    setVotes([]);
+
+    return { error: null };
+  }, []);
+
+  // Fetch all archived games, newest first
+  const fetchArchivedGames = useCallback(async (): Promise<ArchivedGame[]> => {
+    const { data } = await supabase
+      .from('archived_games')
+      .select('*')
+      .order('year', { ascending: false });
+    return (data as ArchivedGame[]) ?? [];
+  }, []);
+
+  // Fetch voting history for a specific game (null = current unarchived game)
+  const fetchHistoryForGame = useCallback(async (gameId: string | null) => {
+    const query = supabase
+      .from('voting_history')
+      .select('*')
+      .order('created_at', { ascending: true });
+
+    const { data } = gameId
+      ? await query.eq('archived_game_id', gameId)
+      : await query.is('archived_game_id', null);
+
+    return data ?? [];
+  }, []);
+
   // Reset all game state except names
   const resetGame = useCallback(async () => {
     // Reset all participants
@@ -597,6 +672,9 @@ export function useVoting() {
     markVotingComplete,
     endAndProceedToNext,
     resetGame,
+    archiveGame,
+    fetchArchivedGames,
+    fetchHistoryForGame,
     startTiebreaker,
     clearTiebreaker,
     getTiebreakerCandidates,

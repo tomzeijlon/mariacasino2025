@@ -23,6 +23,7 @@ export function VotingHistory() {
     const { data: historyData } = await supabase
       .from('voting_history')
       .select('*')
+      .is('archived_game_id', null)
       .order('created_at', { ascending: false });
 
     const { data: participants } = await supabase
