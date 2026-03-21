@@ -3,6 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Trash2, History, ArrowRight } from 'lucide-react';
 import { toast } from 'sonner';
+import { parseVoteResults, type VoteCount } from '@/lib/utils';
 
 interface HistoryEntry {
   id: string;
@@ -11,12 +12,6 @@ interface HistoryEntry {
   created_at: string;
   participant_name?: string;
   move_count?: number;
-}
-
-interface VoteCount {
-  participantId: string;
-  participantName: string;
-  count: number;
 }
 
 export function VotingHistory() {
@@ -72,19 +67,7 @@ export function VotingHistory() {
     }
   };
 
-  const parseResults = (results: unknown): VoteCount[] => {
-    try {
-      if (typeof results === 'string') {
-        return JSON.parse(results) as VoteCount[];
-      }
-      if (Array.isArray(results)) {
-        return results as VoteCount[];
-      }
-      return [];
-    } catch {
-      return [];
-    }
-  };
+  const parseResults = parseVoteResults;
 
   if (loading) {
     return <p className="text-muted-foreground text-center py-2 text-sm">Laddar...</p>;

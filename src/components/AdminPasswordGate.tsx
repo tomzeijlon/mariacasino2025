@@ -8,7 +8,7 @@ interface AdminPasswordGateProps {
   onSuccess: () => void;
 }
 
-const ADMIN_PASSWORD = 'kapacitans';
+const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD || 'kapacitans';
 
 export function AdminPasswordGate({ onSuccess }: AdminPasswordGateProps) {
   const [password, setPassword] = useState('');

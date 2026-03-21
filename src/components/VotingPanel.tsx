@@ -1,6 +1,7 @@
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Participant } from '@/hooks/useVoting';
-import { Gift, Check, Scale } from 'lucide-react';
+import { Gift, Check, Scale, Loader2 } from 'lucide-react';
 
 interface VotingPanelProps {
   participants: Participant[];
@@ -8,6 +9,7 @@ interface VotingPanelProps {
   currentVote: { voted_for_participant_id: string } | undefined;
   onVote: (participantId: string) => Promise<{ error: Error | null }>;
   tiebreakerCandidates?: string[] | null;
+  disabled?: boolean;
 }
 
 export function VotingPanel({
@@ -16,7 +18,20 @@ export function VotingPanel({
   currentVote,
   onVote,
   tiebreakerCandidates,
+  disabled = false,
 }: VotingPanelProps) {
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleVote = async (participantId: string) => {
+    if (submitting || disabled) return;
+    setSubmitting(true);
+    try {
+      await onVote(participantId);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   // If tiebreaker mode, only show those candidates
   const votableParticipants = tiebreakerCandidates
     ? participants.filter(p => tiebreakerCandidates.includes(p.id))
@@ -62,24 +77,33 @@ export function VotingPanel({
       <div className="grid grid-cols-2 gap-2 md:gap-3">
         {votableParticipants.map((participant) => {
           const isVotedFor = currentVote?.voted_for_participant_id === participant.id;
-          
+
           return (
             <Button
               key={participant.id}
               variant={isVotedFor ? 'festive' : 'vote'}
               size="sm"
               className="h-auto py-3 px-2 flex-col gap-1 relative text-sm"
-              onClick={() => onVote(participant.id)}
+              onClick={() => handleVote(participant.id)}
+              disabled={submitting || disabled}
             >
-              {isVotedFor && (
+              {submitting && isVotedFor ? (
+                <Loader2 className="absolute top-1 right-1 w-4 h-4 animate-spin" />
+              ) : isVotedFor ? (
                 <Check className="absolute top-1 right-1 w-4 h-4" />
-              )}
+              ) : null}
               <Gift className="w-5 h-5" />
               <span className="font-display text-sm truncate w-full">{participant.name}</span>
             </Button>
           );
         })}
       </div>
+
+      {disabled && (
+        <p className="text-center text-destructive text-sm font-medium">
+          Röstningen är stängd — tiden är slut.
+        </p>
+      )}
 
       {currentVote && (
         <p className="text-center text-muted-foreground text-sm">
