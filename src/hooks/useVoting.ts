@@ -155,7 +155,7 @@ export function useVoting() {
       let currentWinners = new Set<string>([id]);
       let iterations = 0;
 
-      while (currentWinners.size > 0 && iterations++ < 100) {
+      while (currentWinners.size > 0 && iterations++ < 10000) {
         const nextWinners = new Set<string>();
 
         for (const winner of currentWinners) {
