@@ -1,11 +1,15 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { Snowfall } from '@/components/Snowfall';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Trophy, TrendingUp, TrendingDown, Package, Award, ArrowLeft } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Trophy, TrendingUp, TrendingDown, Package, Award, ArrowLeft, Download, FileSpreadsheet } from 'lucide-react';
 import { parseVoteResults, type VoteCount } from '@/lib/utils';
+import { useVoting, type ArchivedGame } from '@/hooks/useVoting';
+import { exportHTML } from '@/lib/exportHTML';
+import { exportExcel } from '@/lib/exportExcel';
 
 interface HistoryEntry {
   id: string;
@@ -39,20 +43,53 @@ interface PackageStat {
   moveCount: number;
 }
 
+export interface GameStats {
+  easiest: ParticipantStat | null;
+  hardest: ParticipantStat | null;
+  mostMovedPackage: PackageStat | null;
+  topVoters: VoterStat[];
+  history: HistoryEntry[];
+  participantMap: Map<string, string>;
+  label: string;
+}
+
 export default function GameSummary() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const gameId = searchParams.get('gameId');
+
+  const { fetchArchivedGames, fetchHistoryForGame } = useVoting();
+
   const [easiest, setEasiest] = useState<ParticipantStat | null>(null);
   const [hardest, setHardest] = useState<ParticipantStat | null>(null);
   const [mostMovedPackage, setMostMovedPackage] = useState<PackageStat | null>(null);
   const [topVoters, setTopVoters] = useState<VoterStat[]>([]);
   const [loading, setLoading] = useState(true);
+  const [archivedGames, setArchivedGames] = useState<ArchivedGame[]>([]);
+  const [currentGameLabel, setCurrentGameLabel] = useState('Aktuellt spel');
+  const [rawHistory, setRawHistory] = useState<HistoryEntry[]>([]);
+  const [participantMap, setParticipantMap] = useState<Map<string, string>>(new Map());
+
+  // Load archived games list for selector
+  useEffect(() => {
+    fetchArchivedGames().then(setArchivedGames);
+  }, [fetchArchivedGames]);
+
+  // Set label when gameId changes
+  useEffect(() => {
+    if (gameId && archivedGames.length > 0) {
+      const found = archivedGames.find(g => g.id === gameId);
+      if (found) setCurrentGameLabel(`${found.year} — ${found.label}`);
+    } else if (!gameId) {
+      setCurrentGameLabel('Aktuellt spel');
+    }
+  }, [gameId, archivedGames]);
 
   useEffect(() => {
     const fetchStats = async () => {
-      // Fetch all history
-      const { data: history } = await supabase
-        .from('voting_history')
-        .select('*');
+      setLoading(true);
+
+      const history = await fetchHistoryForGame(gameId) as HistoryEntry[];
 
       // Fetch participants
       const { data: participants } = await supabase
@@ -60,31 +97,33 @@ export default function GameSummary() {
         .select('*');
 
       if (!history || !participants) {
+        setEasiest(null);
+        setHardest(null);
+        setMostMovedPackage(null);
+        setTopVoters([]);
         setLoading(false);
         return;
       }
 
-      const participantMap = new Map(participants.map(p => [p.id, p.name]));
+      // Reset stats before computing
+      setEasiest(null);
+      setHardest(null);
+      setMostMovedPackage(null);
+
+      const pMap = new Map(participants.map(p => [p.id, p.name]));
+      setParticipantMap(pMap);
+      setRawHistory(history);
 
       // Calculate participant stats (easiest/hardest to guess)
-      // For each voting_history entry, we need to know:
-      // - locked_participant_id: the CONFIRMED correct owner of the package
-      // - participant_id: who the package was with at time of voting (may have moved)
-      // "Wrong votes" = votes for anyone OTHER than the locked_participant_id
-      
       const participantStats = new Map<string, ParticipantStat>();
-      
-      // Only count rounds where we know who the correct owner is (locked_participant_id is set)
+
       history.forEach((entry: HistoryEntry) => {
         const correctOwnerId = entry.locked_participant_id;
-        if (!correctOwnerId) return; // Skip if we don't know correct owner
-        
-        const name = participantMap.get(correctOwnerId) || 'Okänd';
-        
-        const results = parseVoteResults(entry.results);
+        if (!correctOwnerId) return;
 
+        const name = pMap.get(correctOwnerId) || 'Okänd';
+        const results = parseVoteResults(entry.results);
         const totalVotes = results.reduce((sum, r) => sum + r.count, 0);
-        // Correct votes = votes for the locked_participant_id (confirmed correct owner)
         const correctVotes = results.find(r => r.participantId === correctOwnerId)?.count || 0;
         const wrongVotes = totalVotes - correctVotes;
 
@@ -104,45 +143,37 @@ export default function GameSummary() {
         }
       });
 
-      // Find easiest (fewest wrong votes + fewest rounds)
       const statsArray = Array.from(participantStats.values()).filter(s => s.roundCount > 0);
-      
+
       if (statsArray.length > 0) {
         statsArray.sort((a, b) => {
-          if (a.wrongVotes !== b.wrongVotes) {
-            return a.wrongVotes - b.wrongVotes;
-          }
+          if (a.wrongVotes !== b.wrongVotes) return a.wrongVotes - b.wrongVotes;
           return a.roundCount - b.roundCount;
         });
         setEasiest(statsArray[0]);
 
         statsArray.sort((a, b) => {
-          if (b.wrongVotes !== a.wrongVotes) {
-            return b.wrongVotes - a.wrongVotes;
-          }
+          if (b.wrongVotes !== a.wrongVotes) return b.wrongVotes - a.wrongVotes;
           return b.roundCount - a.roundCount;
         });
         setHardest(statsArray[0]);
       }
 
-      // Find most moved package
+      // Most moved package
       const packageMoves = new Map<string, PackageStat>();
       history.forEach((entry: HistoryEntry) => {
         const ownerId = entry.package_owner_id || entry.participant_id;
         if (!ownerId) return;
-        
+
         const existing = packageMoves.get(ownerId);
         const moveCount = entry.move_count || 0;
-        
+
         if (existing) {
-          // Take the max move count for this package
-          if (moveCount > existing.moveCount) {
-            existing.moveCount = moveCount;
-          }
+          if (moveCount > existing.moveCount) existing.moveCount = moveCount;
         } else {
           packageMoves.set(ownerId, {
             ownerId,
-            ownerName: participantMap.get(ownerId) || 'Okänd',
+            ownerName: pMap.get(ownerId) || 'Okänd',
             moveCount,
           });
         }
@@ -151,26 +182,17 @@ export default function GameSummary() {
       const packageArray = Array.from(packageMoves.values());
       if (packageArray.length > 0) {
         packageArray.sort((a, b) => b.moveCount - a.moveCount);
-        if (packageArray[0].moveCount > 0) {
-          setMostMovedPackage(packageArray[0]);
-        }
+        if (packageArray[0].moveCount > 0) setMostMovedPackage(packageArray[0]);
       }
 
-      // Find best voters - compare votes against locked_participant_id (confirmed correct owner)
-      // IMPORTANT: locked_participant_id is only set on the FINAL round for each package.
-      // We need to:
-      // 1. Group all rounds by package_owner_id
-      // 2. Find the locked_participant_id from the round where it's set
-      // 3. Apply that to ALL rounds for that package
-      
-      // First, build a map of package_owner_id -> locked_participant_id
+      // Best voters
       const packageToCorrectOwner = new Map<string, string>();
       history.forEach((entry: HistoryEntry) => {
         if (entry.package_owner_id && entry.locked_participant_id) {
           packageToCorrectOwner.set(entry.package_owner_id, entry.locked_participant_id);
         }
       });
-      
+
       const voterCorrectCount = new Map<string, number>();
       const voterTotalCount = new Map<string, number>();
 
@@ -178,12 +200,10 @@ export default function GameSummary() {
         const packageOwnerId = entry.package_owner_id;
         if (!packageOwnerId) return;
 
-        // Get the correct owner from the final locked round for this package
         const correctOwnerId = packageToCorrectOwner.get(packageOwnerId);
-        if (!correctOwnerId) return; // Skip if package was never locked
+        if (!correctOwnerId) return;
 
-        // Get the name of the package owner (to exclude their votes on their own package)
-        const packageOwnerName = participantMap.get(packageOwnerId);
+        const packageOwnerName = pMap.get(packageOwnerId);
 
         let voterVotes: Record<string, string> = {};
         try {
@@ -196,14 +216,9 @@ export default function GameSummary() {
           voterVotes = {};
         }
 
-        // For each voter in this round
         Object.entries(voterVotes).forEach(([voterName, votedForId]) => {
-          // Exclude votes on own package (if voter is the package owner)
           if (packageOwnerName && voterName === packageOwnerName) return;
-
           voterTotalCount.set(voterName, (voterTotalCount.get(voterName) || 0) + 1);
-
-          // Count correct votes (voted for the person who was eventually locked as correct owner)
           if (votedForId === correctOwnerId) {
             voterCorrectCount.set(voterName, (voterCorrectCount.get(voterName) || 0) + 1);
           }
@@ -225,21 +240,51 @@ export default function GameSummary() {
 
       if (voterArray.length > 0) {
         voterArray.sort((a, b) => {
-          if (b.percentage !== a.percentage) {
-            return b.percentage - a.percentage;
-          }
+          if (b.percentage !== a.percentage) return b.percentage - a.percentage;
           return b.correctVotes - a.correctVotes;
         });
-        
-        // Get top 3 voters
         setTopVoters(voterArray.slice(0, 3));
+      } else {
+        setTopVoters([]);
       }
 
       setLoading(false);
     };
 
     fetchStats();
-  }, []);
+  }, [gameId, fetchHistoryForGame]);
+
+  const handleExportHTML = () => {
+    exportHTML({
+      easiest,
+      hardest,
+      mostMovedPackage,
+      topVoters,
+      history: rawHistory,
+      participantMap,
+      label: currentGameLabel,
+    });
+  };
+
+  const handleExportExcel = () => {
+    exportExcel({
+      easiest,
+      hardest,
+      mostMovedPackage,
+      topVoters,
+      history: rawHistory,
+      participantMap,
+      label: currentGameLabel,
+    });
+  };
+
+  const handleGameSelect = (value: string) => {
+    if (value === 'current') {
+      navigate('/summary');
+    } else {
+      navigate(`/summary?gameId=${value}`);
+    }
+  };
 
   if (loading) {
     return (
@@ -256,15 +301,34 @@ export default function GameSummary() {
   return (
     <div className="min-h-screen gradient-festive relative">
       <Snowfall />
-      
+
       <div className="relative z-10 container mx-auto px-4 py-8">
-        <header className="text-center mb-12">
+        <header className="text-center mb-8">
           <h1 className="font-display text-4xl md:text-6xl text-gradient-gold mb-4">
             🏆 Spelsammanfattning
           </h1>
-          <p className="text-muted-foreground text-lg">
-            Så gick det för Maria Casino!
+          <p className="text-muted-foreground text-lg mb-4">
+            {currentGameLabel}
           </p>
+
+          {/* Game selector */}
+          {archivedGames.length > 0 && (
+            <div className="flex justify-center">
+              <Select value={gameId ?? 'current'} onValueChange={handleGameSelect}>
+                <SelectTrigger className="w-64 bg-card/80 backdrop-blur border-border">
+                  <SelectValue placeholder="Välj spel" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="current">Aktuellt spel</SelectItem>
+                  {archivedGames.map((game) => (
+                    <SelectItem key={game.id} value={game.id}>
+                      {game.year} — {game.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
         </header>
 
         <div className="grid md:grid-cols-2 gap-6 max-w-4xl mx-auto">
@@ -375,10 +439,18 @@ export default function GameSummary() {
           </Card>
         </div>
 
-        <div className="text-center mt-8">
+        <div className="flex flex-wrap gap-3 justify-center mt-8">
           <Button variant="outline" onClick={() => navigate('/admin')}>
             <ArrowLeft className="w-4 h-4 mr-2" />
             Tillbaka till Admin
+          </Button>
+          <Button variant="outline" onClick={handleExportHTML}>
+            <Download className="w-4 h-4 mr-2" />
+            Exportera HTML
+          </Button>
+          <Button variant="outline" onClick={handleExportExcel}>
+            <FileSpreadsheet className="w-4 h-4 mr-2" />
+            Exportera Excel
           </Button>
         </div>
       </div>
