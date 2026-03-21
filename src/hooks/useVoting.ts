@@ -53,19 +53,16 @@ export function useVoting() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     
-    const [participantsRes, sessionRes, votesRes] = await Promise.all([
+    const [participantsRes, sessionRes] = await Promise.all([
       supabase.from('participants').select('*').order('sort_order', { ascending: true, nullsFirst: false }),
       supabase.from('voting_sessions').select('*').eq('is_active', true).maybeSingle(),
-      supabase.from('votes').select('*'),
     ]);
 
     if (participantsRes.data) setParticipants(participantsRes.data);
     if (sessionRes.data) {
       setSession(sessionRes.data);
-      // Filter votes for current session
-      if (votesRes.data) {
-        setVotes(votesRes.data.filter(v => v.session_id === sessionRes.data.id));
-      }
+      const { data: votesData } = await supabase.from('votes').select('*').eq('session_id', sessionRes.data.id);
+      if (votesData) setVotes(votesData);
     } else {
       setVotes([]);
     }
@@ -156,8 +153,9 @@ export function useVoting() {
     if (allHistory) {
       const processed = new Set<string>();
       let currentWinners = new Set<string>([id]);
+      let iterations = 0;
 
-      while (currentWinners.size > 0) {
+      while (currentWinners.size > 0 && iterations++ < 100) {
         const nextWinners = new Set<string>();
 
         for (const winner of currentWinners) {
@@ -204,8 +202,6 @@ export function useVoting() {
         console.error('Error updating voting_history with locked_participant_id:', historyError);
       }
     }
-
-    console.log(`Locked participant ${id} - updated ${uniqueIds.length} history entries in chain`);
 
     const { error } = await supabase.from('participants').update({ is_locked: true }).eq('id', id);
     return { error };

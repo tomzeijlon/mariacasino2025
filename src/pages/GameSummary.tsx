@@ -5,12 +5,7 @@ import { Snowfall } from '@/components/Snowfall';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Trophy, TrendingUp, TrendingDown, Package, Award, ArrowLeft } from 'lucide-react';
-
-interface VoteCount {
-  participantId: string;
-  participantName: string;
-  count: number;
-}
+import { parseVoteResults, type VoteCount } from '@/lib/utils';
 
 interface HistoryEntry {
   id: string;
@@ -86,16 +81,7 @@ export default function GameSummary() {
         
         const name = participantMap.get(correctOwnerId) || 'Okänd';
         
-        let results: VoteCount[] = [];
-        try {
-          if (typeof entry.results === 'string') {
-            results = JSON.parse(entry.results);
-          } else if (Array.isArray(entry.results)) {
-            results = entry.results as VoteCount[];
-          }
-        } catch {
-          results = [];
-        }
+        const results = parseVoteResults(entry.results);
 
         const totalVotes = results.reduce((sum, r) => sum + r.count, 0);
         // Correct votes = votes for the locked_participant_id (confirmed correct owner)
@@ -185,39 +171,20 @@ export default function GameSummary() {
         }
       });
       
-      console.log('=== BEST VOTER CALCULATION DEBUG ===');
-      console.log('All history entries:', history.length);
-      console.log('Participant map:', Object.fromEntries(participantMap));
-      console.log('Package to correct owner mapping:');
-      packageToCorrectOwner.forEach((correctOwner, packageOwner) => {
-        console.log(`  Package by ${participantMap.get(packageOwner)} -> correct owner: ${participantMap.get(correctOwner)}`);
-      });
-      
       const voterCorrectCount = new Map<string, number>();
       const voterTotalCount = new Map<string, number>();
-      
-      let totalRoundsProcessed = 0;
-      let totalVotesProcessed = 0;
-      let totalCorrectVotes = 0;
-      
-      history.forEach((entry: HistoryEntry, index: number) => {
+
+      history.forEach((entry: HistoryEntry) => {
         const packageOwnerId = entry.package_owner_id;
-        if (!packageOwnerId) {
-          console.log(`Round ${index + 1}: Skipping - no package_owner_id`);
-          return;
-        }
-        
+        if (!packageOwnerId) return;
+
         // Get the correct owner from the final locked round for this package
         const correctOwnerId = packageToCorrectOwner.get(packageOwnerId);
-        if (!correctOwnerId) {
-          console.log(`Round ${index + 1}: Skipping - no locked owner found for package by ${participantMap.get(packageOwnerId)}`);
-          return; // Skip if package was never locked
-        }
-        
+        if (!correctOwnerId) return; // Skip if package was never locked
+
         // Get the name of the package owner (to exclude their votes on their own package)
         const packageOwnerName = participantMap.get(packageOwnerId);
-        const correctOwnerName = participantMap.get(correctOwnerId);
-        
+
         let voterVotes: Record<string, string> = {};
         try {
           if (typeof entry.correct_voters === 'string') {
@@ -229,50 +196,19 @@ export default function GameSummary() {
           voterVotes = {};
         }
 
-        totalRoundsProcessed++;
-        const roundVoterCount = Object.keys(voterVotes).length;
-        
-        console.log(`\n--- Round ${index + 1}: Package by ${packageOwnerName}, move_count: ${entry.move_count} ---`);
-        console.log(`  Correct owner for this package: ${correctOwnerName} (${correctOwnerId})`);
-        console.log(`  Voters in this round: ${roundVoterCount}`);
-        
-        let roundCorrectVotes = 0;
-        
         // For each voter in this round
         Object.entries(voterVotes).forEach(([voterName, votedForId]) => {
-          const votedForName = participantMap.get(votedForId) || 'UNKNOWN';
-          
           // Exclude votes on own package (if voter is the package owner)
-          if (packageOwnerName && voterName === packageOwnerName) {
-            console.log(`    ${voterName} -> ${votedForName} (EXCLUDED - own package)`);
-            return;
-          }
-          
-          totalVotesProcessed++;
-          
-          // Count total votes
+          if (packageOwnerName && voterName === packageOwnerName) return;
+
           voterTotalCount.set(voterName, (voterTotalCount.get(voterName) || 0) + 1);
-          
+
           // Count correct votes (voted for the person who was eventually locked as correct owner)
-          const isCorrect = votedForId === correctOwnerId;
-          if (isCorrect) {
+          if (votedForId === correctOwnerId) {
             voterCorrectCount.set(voterName, (voterCorrectCount.get(voterName) || 0) + 1);
-            totalCorrectVotes++;
-            roundCorrectVotes++;
           }
-          
-          console.log(`    ${voterName} -> ${votedForName} ${isCorrect ? '✓ CORRECT' : '✗ wrong'}`);
         });
-        
-        console.log(`  Round summary: ${roundCorrectVotes} correct votes out of ${roundVoterCount}`);
       });
-      
-      console.log('\n=== FINAL SUMMARY ===');
-      console.log(`Total rounds processed: ${totalRoundsProcessed}`);
-      console.log(`Total votes processed: ${totalVotesProcessed}`);
-      console.log(`Total correct votes: ${totalCorrectVotes}`);
-      console.log('Voter correct counts:', Object.fromEntries(voterCorrectCount));
-      console.log('Voter total counts:', Object.fromEntries(voterTotalCount));
 
       const voterArray: VoterStat[] = [];
       voterTotalCount.forEach((total, name) => {

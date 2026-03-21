@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useVoting } from '@/hooks/useVoting';
 import { Snowfall } from '@/components/Snowfall';
 import { VotingPanel } from '@/components/VotingPanel';
@@ -11,9 +11,11 @@ export default function Vote() {
   const [voterName, setVoterName] = useState<string | null>(() => {
     return localStorage.getItem('voter_name');
   });
+  const [votingDisabled, setVotingDisabled] = useState(false);
 
   const {
     participants,
+    session,
     loading,
     castVote,
     getCurrentParticipant,
@@ -21,6 +23,11 @@ export default function Vote() {
     votes,
     getTiebreakerCandidates,
   } = useVoting();
+
+  // Reset voting lock whenever a new session starts
+  useEffect(() => {
+    setVotingDisabled(false);
+  }, [session?.id]);
 
   const tiebreakerCandidates = getTiebreakerCandidates();
 
@@ -76,7 +83,12 @@ export default function Vote() {
         {/* Countdown when one vote away */}
         {isOneVoteAway && (
           <div className="max-w-md mx-auto mb-4">
-            <VoteCountdown isActive={isOneVoteAway} duration={30} />
+            <VoteCountdown
+              isActive={isOneVoteAway}
+              duration={30}
+              gracePeriod={5}
+              onExpire={() => setVotingDisabled(true)}
+            />
           </div>
         )}
 
@@ -88,6 +100,7 @@ export default function Vote() {
             currentVote={currentVote}
             onVote={handleVote}
             tiebreakerCandidates={tiebreakerCandidates}
+            disabled={votingDisabled}
           />
         </div>
       </div>
