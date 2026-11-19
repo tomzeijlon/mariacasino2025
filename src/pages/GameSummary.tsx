@@ -6,52 +6,10 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Trophy, TrendingUp, TrendingDown, Package, Award, ArrowLeft, Download, FileSpreadsheet } from 'lucide-react';
-import { parseVoteResults, type VoteCount } from '@/lib/utils';
+import { computeGameStats, type GameStats, type HistoryEntry, type ParticipantStat, type PackageStat, type VoterStat } from '@/lib/gameStats';
 import { useVoting, type ArchivedGame } from '@/hooks/useVoting';
 import { exportHTML } from '@/lib/exportHTML';
 import { exportExcel } from '@/lib/exportExcel';
-
-interface HistoryEntry {
-  id: string;
-  participant_id: string | null;
-  package_owner_id: string | null;
-  locked_participant_id: string | null;
-  results: unknown;
-  move_count: number;
-  correct_voters: unknown;
-  created_at: string;
-}
-
-interface ParticipantStat {
-  id: string;
-  name: string;
-  totalVotes: number;
-  wrongVotes: number;
-  roundCount: number;
-}
-
-interface VoterStat {
-  name: string;
-  correctVotes: number;
-  totalVotes: number;
-  percentage: number;
-}
-
-interface PackageStat {
-  ownerId: string;
-  ownerName: string;
-  moveCount: number;
-}
-
-export interface GameStats {
-  easiest: ParticipantStat | null;
-  hardest: ParticipantStat | null;
-  mostMovedPackage: PackageStat | null;
-  topVoters: VoterStat[];
-  history: HistoryEntry[];
-  participantMap: Map<string, string>;
-  label: string;
-}
 
 export default function GameSummary() {
   const navigate = useNavigate();
@@ -105,178 +63,25 @@ export default function GameSummary() {
         return;
       }
 
-      // Reset stats before computing
-      setEasiest(null);
-      setHardest(null);
-      setMostMovedPackage(null);
-
       const pMap = new Map(participants.map(p => [p.id, p.name]));
+      const stats = computeGameStats(history, pMap, '');
       setParticipantMap(pMap);
       setRawHistory(history);
-
-      // Calculate participant stats (easiest/hardest to guess)
-      const participantStats = new Map<string, ParticipantStat>();
-
-      history.forEach((entry: HistoryEntry) => {
-        const correctOwnerId = entry.locked_participant_id;
-        if (!correctOwnerId) return;
-
-        const name = pMap.get(correctOwnerId) || 'Okänd';
-        const results = parseVoteResults(entry.results);
-        const totalVotes = results.reduce((sum, r) => sum + r.count, 0);
-        const correctVotes = results.find(r => r.participantId === correctOwnerId)?.count || 0;
-        const wrongVotes = totalVotes - correctVotes;
-
-        const existing = participantStats.get(correctOwnerId);
-        if (existing) {
-          existing.totalVotes += totalVotes;
-          existing.wrongVotes += wrongVotes;
-          existing.roundCount += 1;
-        } else {
-          participantStats.set(correctOwnerId, {
-            id: correctOwnerId,
-            name,
-            totalVotes,
-            wrongVotes,
-            roundCount: 1,
-          });
-        }
-      });
-
-      const statsArray = Array.from(participantStats.values()).filter(s => s.roundCount > 0);
-
-      if (statsArray.length > 0) {
-        statsArray.sort((a, b) => {
-          if (a.wrongVotes !== b.wrongVotes) return a.wrongVotes - b.wrongVotes;
-          return a.roundCount - b.roundCount;
-        });
-        setEasiest(statsArray[0]);
-
-        statsArray.sort((a, b) => {
-          if (b.wrongVotes !== a.wrongVotes) return b.wrongVotes - a.wrongVotes;
-          return b.roundCount - a.roundCount;
-        });
-        setHardest(statsArray[0]);
-      }
-
-      // Most moved package
-      const packageMoves = new Map<string, PackageStat>();
-      history.forEach((entry: HistoryEntry) => {
-        const ownerId = entry.package_owner_id || entry.participant_id;
-        if (!ownerId) return;
-
-        const existing = packageMoves.get(ownerId);
-        const moveCount = entry.move_count || 0;
-
-        if (existing) {
-          if (moveCount > existing.moveCount) existing.moveCount = moveCount;
-        } else {
-          packageMoves.set(ownerId, {
-            ownerId,
-            ownerName: pMap.get(ownerId) || 'Okänd',
-            moveCount,
-          });
-        }
-      });
-
-      const packageArray = Array.from(packageMoves.values());
-      if (packageArray.length > 0) {
-        packageArray.sort((a, b) => b.moveCount - a.moveCount);
-        if (packageArray[0].moveCount > 0) setMostMovedPackage(packageArray[0]);
-      }
-
-      // Best voters
-      const packageToCorrectOwner = new Map<string, string>();
-      history.forEach((entry: HistoryEntry) => {
-        if (entry.package_owner_id && entry.locked_participant_id) {
-          packageToCorrectOwner.set(entry.package_owner_id, entry.locked_participant_id);
-        }
-      });
-
-      const voterCorrectCount = new Map<string, number>();
-      const voterTotalCount = new Map<string, number>();
-
-      history.forEach((entry: HistoryEntry) => {
-        const packageOwnerId = entry.package_owner_id;
-        if (!packageOwnerId) return;
-
-        const correctOwnerId = packageToCorrectOwner.get(packageOwnerId);
-        if (!correctOwnerId) return;
-
-        const packageOwnerName = pMap.get(packageOwnerId);
-
-        let voterVotes: Record<string, string> = {};
-        try {
-          if (typeof entry.correct_voters === 'string') {
-            voterVotes = JSON.parse(entry.correct_voters);
-          } else if (entry.correct_voters && typeof entry.correct_voters === 'object') {
-            voterVotes = entry.correct_voters as Record<string, string>;
-          }
-        } catch {
-          voterVotes = {};
-        }
-
-        Object.entries(voterVotes).forEach(([voterName, votedForId]) => {
-          if (packageOwnerName && voterName === packageOwnerName) return;
-          voterTotalCount.set(voterName, (voterTotalCount.get(voterName) || 0) + 1);
-          if (votedForId === correctOwnerId) {
-            voterCorrectCount.set(voterName, (voterCorrectCount.get(voterName) || 0) + 1);
-          }
-        });
-      });
-
-      const voterArray: VoterStat[] = [];
-      voterTotalCount.forEach((total, name) => {
-        const correct = voterCorrectCount.get(name) || 0;
-        if (total > 0) {
-          voterArray.push({
-            name,
-            correctVotes: correct,
-            totalVotes: total,
-            percentage: Math.round((correct / total) * 100),
-          });
-        }
-      });
-
-      if (voterArray.length > 0) {
-        voterArray.sort((a, b) => {
-          if (b.percentage !== a.percentage) return b.percentage - a.percentage;
-          return b.correctVotes - a.correctVotes;
-        });
-        setTopVoters(voterArray.slice(0, 3));
-      } else {
-        setTopVoters([]);
-      }
-
+      setEasiest(stats.easiest);
+      setHardest(stats.hardest);
+      setMostMovedPackage(stats.mostMovedPackage);
+      setTopVoters(stats.topVoters);
       setLoading(false);
     };
 
     fetchStats();
   }, [gameId, fetchHistoryForGame]);
 
-  const handleExportHTML = () => {
-    exportHTML({
-      easiest,
-      hardest,
-      mostMovedPackage,
-      topVoters,
-      history: rawHistory,
-      participantMap,
-      label: currentGameLabel,
-    });
-  };
+  const buildExportStats = (): GameStats => computeGameStats(rawHistory, participantMap, currentGameLabel);
 
-  const handleExportExcel = () => {
-    exportExcel({
-      easiest,
-      hardest,
-      mostMovedPackage,
-      topVoters,
-      history: rawHistory,
-      participantMap,
-      label: currentGameLabel,
-    });
-  };
+  const handleExportHTML = () => exportHTML(buildExportStats());
+
+  const handleExportExcel = () => exportExcel(buildExportStats());
 
   const handleGameSelect = (value: string) => {
     if (value === 'current') {

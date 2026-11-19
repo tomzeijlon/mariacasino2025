@@ -11,6 +11,10 @@ export function VoteCountdown({ isActive, duration = 30, gracePeriod = 5, onExpi
   // Total ticks = duration + gracePeriod; grace phase starts when timeLeft <= gracePeriod
   const [timeLeft, setTimeLeft] = useState(duration + gracePeriod);
   const expiredCalled = useRef(false);
+  // Keep the latest callback in a ref so a new inline function from the parent
+  // doesn't restart the interval on every render.
+  const onExpireRef = useRef(onExpire);
+  onExpireRef.current = onExpire;
 
   useEffect(() => {
     if (!isActive) {
@@ -20,18 +24,19 @@ export function VoteCountdown({ isActive, duration = 30, gracePeriod = 5, onExpi
     }
 
     const interval = setInterval(() => {
-      setTimeLeft((prev) => {
-        const next = prev - 1;
-        if (next <= 0 && !expiredCalled.current) {
-          expiredCalled.current = true;
-          onExpire?.();
-        }
-        return Math.max(next, 0);
-      });
+      setTimeLeft((prev) => Math.max(prev - 1, 0));
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [isActive, duration, gracePeriod, onExpire]);
+  }, [isActive, duration, gracePeriod]);
+
+  // Notify the parent outside the state updater (updaters must be pure)
+  useEffect(() => {
+    if (isActive && timeLeft <= 0 && !expiredCalled.current) {
+      expiredCalled.current = true;
+      onExpireRef.current?.();
+    }
+  }, [isActive, timeLeft]);
 
   if (!isActive) return null;
 

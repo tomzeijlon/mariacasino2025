@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { entriesForPackage, packageHeldBy, replayPackages } from '@/lib/gameStats';
 
 export interface Participant {
   id: string;
@@ -16,6 +17,8 @@ export interface VotingSession {
   current_participant_id: string | null;
   is_active: boolean;
   created_at: string;
+  /** Set while a tiebreaker vote runs: only these participants can be voted for */
+  tiebreaker_candidate_ids?: string[] | null;
 }
 
 export interface Vote {
@@ -137,73 +140,29 @@ export function useVoting() {
     return { error };
   }, []);
 
-  // Lock participant (correct answer found) - saves locked_participant_id for "best voter" stats
-  const lockParticipant = useCallback(async (id: string) => {
-    // When locking participant X as the correct owner of their package, we need to update
-    // ALL voting_history entries for the entire package chain leading to X.
-    //
-    // The chain works like this: X's package might have been held by A → B → X before X was locked.
-    // Each round's history entry has package_owner_id = whoever held it at that time.
-    // lockParticipant must find ALL entries in the chain, not just those where package_owner_id=X.
-    //
-    // Algorithm: trace backward through "who won from whom":
-    //   1. Add all entries where X is the holder (package_owner_id=X)
-    //   2. Find entries where X won the package FROM someone else (results[0].participantId=X, package_owner_id!=X)
-    //   3. The previous holder is tracked as next node; repeat from step 1 for that holder
-
-    const { data: allHistory } = await supabase
+  // Fetch the current (unarchived) game's history in a form the package replay understands
+  const fetchCurrentHistoryForReplay = useCallback(async () => {
+    const { data } = await supabase
       .from('voting_history')
-      .select('id, package_owner_id, results');
+      .select('id, participant_id, package_owner_id, results, created_at')
+      .is('archived_game_id', null);
+    return data ?? [];
+  }, []);
 
-    const idsToUpdate: string[] = [];
+  // Lock participant (correct answer found) - saves locked_participant_id for "best voter" stats.
+  // Packages swap when voted away (A's package goes to B, A gets B's old package), so the history
+  // is replayed to find which package X holds now; every round of that package gets X as its
+  // confirmed correct owner.
+  const lockParticipant = useCallback(async (id: string) => {
+    const history = await fetchCurrentHistoryForReplay();
+    const packageKey = packageHeldBy(history, id);
+    const idsToUpdate = entriesForPackage(history, packageKey);
 
-    if (allHistory) {
-      const processed = new Set<string>();
-      let currentWinners = new Set<string>([id]);
-      let iterations = 0;
-
-      while (currentWinners.size > 0 && iterations++ < 10000) {
-        const nextWinners = new Set<string>();
-
-        for (const winner of currentWinners) {
-          if (processed.has(winner)) continue;
-          processed.add(winner);
-
-          for (const entry of allHistory) {
-            if (entry.package_owner_id === winner) {
-              // This person was the holder in this round — include it
-              idsToUpdate.push(entry.id);
-            } else {
-              // Check if this winner won the package from a different holder
-              try {
-                const results = typeof entry.results === 'string'
-                  ? JSON.parse(entry.results)
-                  : entry.results;
-                if (Array.isArray(results) && results[0]?.participantId === winner) {
-                  // winner won this round (from entry.package_owner_id)
-                  idsToUpdate.push(entry.id);
-                  if (entry.package_owner_id) {
-                    nextWinners.add(entry.package_owner_id);
-                  }
-                }
-              } catch {
-                // skip unparseable results
-              }
-            }
-          }
-        }
-
-        currentWinners = nextWinners;
-      }
-    }
-
-    const uniqueIds = [...new Set(idsToUpdate)];
-
-    if (uniqueIds.length > 0) {
+    if (idsToUpdate.length > 0) {
       const { error: historyError } = await supabase
         .from('voting_history')
         .update({ locked_participant_id: id })
-        .in('id', uniqueIds);
+        .in('id', idsToUpdate);
 
       if (historyError) {
         console.error('Error updating voting_history with locked_participant_id:', historyError);
@@ -212,7 +171,7 @@ export function useVoting() {
 
     const { error } = await supabase.from('participants').update({ is_locked: true }).eq('id', id);
     return { error };
-  }, []);
+  }, [fetchCurrentHistoryForReplay]);
 
   // Unlock participant
   const unlockParticipant = useCallback(async (id: string) => {
@@ -277,28 +236,13 @@ export function useVoting() {
             }))
             .sort((a, b) => b.count - a.count);
 
-          // Get previous history for this package to track original owner and move count
-          // First check if there's existing history where the winner is now the current holder
-          // This helps us trace the chain of package ownership
-          const { data: existingHistory } = await supabase
-            .from('voting_history')
-            .select('move_count, original_package_owner_id, package_owner_id')
-            .eq('package_owner_id', session.current_participant_id)
-            .order('created_at', { ascending: false })
-            .limit(1);
-
-          let originalPackageOwnerId = session.current_participant_id;
-          let previousMoveCount = 0;
-          let isFirstVoting = true;
-
-          if (existingHistory && existingHistory.length > 0) {
-            // This package has been voted on before
-            previousMoveCount = existingHistory[0].move_count || 0;
-            originalPackageOwnerId = existingHistory[0].original_package_owner_id || session.current_participant_id;
-            isFirstVoting = false;
-          }
-
-          const isMoved = winnerId !== session.current_participant_id;
+          // Replay this game's rounds to find which package the holder has now and how often it has moved
+          const history = await fetchCurrentHistoryForReplay();
+          const replay = replayPackages(history);
+          const holderId = session.current_participant_id;
+          const originalPackageOwnerId = replay.holdings.get(holderId) ?? holderId;
+          const isMoved = winnerId !== holderId;
+          const moveCount = (replay.movesByPackage.get(originalPackageOwnerId) ?? 0) + (isMoved ? 1 : 0);
 
           // Save vote data per voter for later "best voter" calculation
           // We store who each person voted for - will be compared to locked_participant_id at game end
@@ -315,7 +259,7 @@ export function useVoting() {
             original_package_owner_id: originalPackageOwnerId,
             results: JSON.stringify(voteCounts),
             correct_voters: JSON.stringify(voterVotes),
-            move_count: isFirstVoting && isMoved ? 1 : (isMoved ? previousMoveCount + 1 : previousMoveCount),
+            move_count: moveCount,
           });
         }
       }
@@ -325,7 +269,7 @@ export function useVoting() {
       setSession(null);
       setVotes([]);
     }
-  }, [session, participants]);
+  }, [session, participants, fetchCurrentHistoryForReplay]);
 
   // Start a tiebreaker vote with only specific candidates
   const startTiebreaker = useCallback(async (participantId: string, candidateIds: string[]) => {
@@ -337,12 +281,10 @@ export function useVoting() {
       await supabase.from('votes').delete().eq('session_id', session.id);
     }
 
-    // Create new session - store tiebreaker candidates in localStorage for the voting page
-    localStorage.setItem('tiebreaker_candidates', JSON.stringify(candidateIds));
-
+    // Create new session; candidates are stored on the session so every device sees them
     const { data, error } = await supabase
       .from('voting_sessions')
-      .insert({ current_participant_id: participantId, is_active: true })
+      .insert({ current_participant_id: participantId, is_active: true, tiebreaker_candidate_ids: candidateIds })
       .select()
       .single();
     
@@ -352,23 +294,11 @@ export function useVoting() {
     return { error };
   }, [session?.id]);
 
-  // Clear tiebreaker mode
-  const clearTiebreaker = useCallback(() => {
-    localStorage.removeItem('tiebreaker_candidates');
-  }, []);
-
-  // Get tiebreaker candidates if in tiebreaker mode
+  // Get tiebreaker candidates if the active session is a tiebreaker
   const getTiebreakerCandidates = useCallback((): string[] | null => {
-    const stored = localStorage.getItem('tiebreaker_candidates');
-    if (stored) {
-      try {
-        return JSON.parse(stored);
-      } catch {
-        return null;
-      }
-    }
-    return null;
-  }, []);
+    const ids = session?.tiebreaker_candidate_ids;
+    return ids && ids.length > 0 ? ids : null;
+  }, [session]);
 
   // Cast a vote
   const castVote = useCallback(async (participantId: string) => {
@@ -627,11 +557,11 @@ export function useVoting() {
       })
       .neq('id', '00000000-0000-0000-0000-000000000000');
     
-    // Delete all history
+    // Delete the current game's history (archived games are kept)
     await supabase
       .from('voting_history')
       .delete()
-      .neq('id', '00000000-0000-0000-0000-000000000000');
+      .is('archived_game_id', null);
     
     // End any active session
     await supabase
@@ -676,7 +606,6 @@ export function useVoting() {
     fetchArchivedGames,
     fetchHistoryForGame,
     startTiebreaker,
-    clearTiebreaker,
     getTiebreakerCandidates,
   };
 }

@@ -227,8 +227,9 @@ export default ComponentName;
 - Persistence: `localStorage` for voter token, voter name, admin auth flag
 
 ### Admin Auth
-- Password: stored hardcoded as `"kapacitans"` in `AdminPasswordGate.tsx`
-- Auth state stored in `sessionStorage` — resets on tab close
+- Password is checked by the `verify-admin` Supabase Edge Function against the `ADMIN_PASSWORD` secret (never put the password in code or docs)
+- On success a flag is stored in `sessionStorage` — resets on tab close
+- This is a soft gate only: RLS policies allow the anon key to read/write every table, so anyone can bypass it. Acceptable for a family game; don't store anything sensitive.
 
 ### Notifications
 Use `sonner` toast via:
@@ -254,7 +255,7 @@ Defined in `src/App.tsx` using React Router v6:
 | `/` | `Index` | Landing page |
 | `/vote` | `Vote` | Voter interface |
 | `/admin` | `Admin` | Admin dashboard (password gated) |
-| `/game-summary` | `GameSummary` | Post-game statistics |
+| `/summary` | `GameSummary` | Post-game statistics (`?gameId=<archived id>` for archived games) |
 | `*` | `NotFound` | 404 fallback |
 
 ---
@@ -277,9 +278,12 @@ This project has no test suite (no Jest, Vitest, Cypress, etc.). It was scaffold
 ## Deployment
 
 - **Platform:** Lovable (https://lovable.dev)
-- **Method:** Push to `master` branch → Lovable auto-deploys
+- **Method:** Merge to `main` (the default branch) → Lovable auto-deploys
 - **Custom domain:** Configurable in Lovable project settings
-- Do not push directly to `main` — use `master` or feature branches
+- Work on feature branches and merge to `main` via pull request
+
+### Database changes must go through Lovable
+Lovable owns the Supabase project (Lovable Cloud). **SQL files committed to `supabase/migrations/` via GitHub are NOT applied to the live database.** The March 2026 migrations (`20260321…`, `20260322…`) sat unapplied for months, which silently broke the history panel, the summary page and archiving. To change the schema, prompt Lovable with the SQL so it runs the migration and regenerates `src/integrations/supabase/types.ts`. Write migrations idempotently (`IF NOT EXISTS`, `DROP … IF EXISTS`). If `npx tsc -p tsconfig.app.json --noEmit` complains about unknown tables/columns, the live schema is probably behind the code.
 
 ---
 
@@ -287,19 +291,25 @@ This project has no test suite (no Jest, Vitest, Cypress, etc.). It was scaffold
 
 | # | Description | Status |
 |---|-------------|--------|
-| 1 | **"Bästa röstare"-statistiken fel** — `lockParticipant` only updated history entries where `package_owner_id=id`, missing all earlier rounds where the package was held by someone else. | **FIXED** — `lockParticipant` now traces the full package chain backward (using `results[0]` to find who gave the package to whom) and updates all entries. |
-| 2 | **"Lättast paket"-statistiken fel** — Same root cause as #1; wrong votes were undercounted because many rounds were skipped. | **FIXED** — Same fix as #1. |
-| 3 | **"Har framröstat paket"-markering försvinner inte** — When package A→B, A should lose marker. | **Already fixed** in `markVotingComplete`: sets `has_received_package=false` on the previous holder when the package moves. |
-| 4 | **"Nästa röstning" väljer samma person** — After person A's package moves to B, the system re-selected A immediately instead of moving on to others. | **FIXED** — `endAndProceedToNext` now excludes the current participant when selecting the next vote target (only falls back to them if nobody else is eligible). |
-| 5 | **Automatiskt framröstat för sista personen** — When only one person lacks `has_received_package`, voting should be skipped. | **Already implemented** in `endAndProceedToNext` (`allEligible.length === 1` auto-marks). |
-| 6 | **Blinkande namn på röstsidan** | **Likely already fine** — Buttons use stable `key={participant.id}`; React won't remount them on re-renders. The `transition-all duration-300` only animates on actual variant changes. If blinking is still observed, investigate CSS transitions on the `vote` button variant. |
+| 1 | **"Bästa röstare"/"Lättast att gissa" wrong** — stats followed packages by *person*, but a person holds different packages during a game (the March 2026 "chain" fix had the same flaw). | **FIXED (Nov 2026)** — packages are tracked by replaying history with the swap rule (`src/lib/gameStats.ts`). |
+| 2 | **"Mest flyttade paketet" / `move_count` wrong** — inherited from a different package that the same person held earlier. | **FIXED (Nov 2026)** — computed from the replay. |
+| 3 | **"Har framröstat paket" marker** — when package A→B, A loses the marker. | Implemented in `markVotingComplete`. |
+| 4 | **"Nästa röstning" picks the same person** | `endAndProceedToNext` prefers others. |
+| 5 | **Last remaining person auto-marked** | `endAndProceedToNext` (`allEligible.length === 1`). |
+| 6 | **Tiebreaker not shown on voters' phones** — candidates were stored in the admin's `localStorage`. | **FIXED (Nov 2026)** — stored in `voting_sessions.tiebreaker_candidate_ids` (needs the Nov 2026 Lovable migration). |
+| 7 | **Double-click on "Nästa" froze the game** — saved the round twice and created two active sessions (`maybeSingle()` then fails everywhere). | **FIXED (Nov 2026)** — admin actions run one at a time + unique index allowing a single active session. |
+| 8 | **Voters locked out after "Nollställ"** once the countdown had expired. | **FIXED (Nov 2026)** — voting re-opens when the vote count drops. |
+| 9 | **"Återställ" deleted archived games' history** | **FIXED (Nov 2026)** — only unarchived history is deleted. |
 
 ---
 
 ## Game Logic Notes
 
-- `lockParticipant(id)` traces the full package ownership chain: finds all `voting_history` entries where `id` (or any prior holder in the chain) held the package, then sets `locked_participant_id=id` on all of them. This enables correct "best voters" and "easiest package" statistics.
-- `endAndProceedToNext(winnerId)` auto-marks the last eligible participant (no vote needed when only one person is left), and prefers participants other than the just-voted-on person when selecting the next vote target.
+- **Package model:** every participant starts holding their own package. When the package held by A is voted to B, A and B swap (A gets B's old package). A package is identified by the participant who held it at the start ("package key"). `replayPackages()` in `src/lib/gameStats.ts` replays `voting_history` in `created_at` order to know who holds which package; deleting history rows from the admin panel changes that replay.
+- `lockParticipant(id)` replays the current game's history, finds the package `id` holds now, and sets `locked_participant_id=id` on every round of that package.
+- `endVoting` stores `original_package_owner_id` (package key) and `move_count` from the replay.
+- Statistics (summary page, HTML and Excel export) all come from `computeGameStats()` — don't duplicate the logic.
+- `endAndProceedToNext(winnerId)` auto-marks the last eligible participant, and prefers participants other than the just-voted-on person when selecting the next vote target.
 
 ---
 
