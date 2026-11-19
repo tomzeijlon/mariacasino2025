@@ -1,9 +1,10 @@
 import * as XLSX from 'xlsx';
 import { parseVoteResults } from '@/lib/utils';
-import type { GameStats } from '@/pages/GameSummary';
+import { parseVoterVotes, replayPackages, type GameStats } from '@/lib/gameStats';
 
 export function exportExcel(stats: GameStats): void {
-  const { easiest, hardest, mostMovedPackage, topVoters, history, participantMap, label } = stats;
+  const { easiest, hardest, mostMovedPackage, topVoters, allVoters, history, participantMap, correctOwnerByEntry, label } = stats;
+  const { moveCountByEntry } = replayPackages(history);
   const wb = XLSX.utils.book_new();
 
   // ── Sheet 1: Sammanfattning ──────────────────────────────────────────────────
@@ -38,8 +39,9 @@ export function exportExcel(stats: GameStats): void {
     const holderName = entry.participant_id ? (participantMap.get(entry.participant_id) || 'Okänd') : 'Okänd';
     const winnerName = winner?.participantName || 'Okänd';
     const totalVotes = results.reduce((s, r) => s + r.count, 0);
-    const correctVotes = entry.locked_participant_id
-      ? (results.find(r => r.participantId === entry.locked_participant_id)?.count || 0)
+    const correctOwnerId = correctOwnerByEntry.get(entry.id);
+    const correctVotes = correctOwnerId
+      ? (results.find(r => r.participantId === correctOwnerId)?.count || 0)
       : 0;
     return [
       index + 1,
@@ -48,7 +50,7 @@ export function exportExcel(stats: GameStats): void {
       totalVotes,
       correctVotes,
       totalVotes - correctVotes,
-      entry.move_count || 0,
+      moveCountByEntry.get(entry.id) ?? 0,
     ];
   });
   const wsRounds = XLSX.utils.aoa_to_sheet([roundHeader, ...roundData]);
@@ -56,52 +58,8 @@ export function exportExcel(stats: GameStats): void {
   XLSX.utils.book_append_sheet(wb, wsRounds, 'Omgångar');
 
   // ── Sheet 3: Röstare ─────────────────────────────────────────────────────────
-  const voterTotalMap = new Map<string, number>();
-  const voterCorrectMap = new Map<string, number>();
-  const packageToCorrectOwner = new Map<string, string>();
-
-  history.forEach(entry => {
-    if (entry.package_owner_id && entry.locked_participant_id) {
-      packageToCorrectOwner.set(entry.package_owner_id, entry.locked_participant_id);
-    }
-  });
-
-  history.forEach(entry => {
-    const packageOwnerId = entry.package_owner_id;
-    if (!packageOwnerId) return;
-    const correctOwnerId = packageToCorrectOwner.get(packageOwnerId);
-    if (!correctOwnerId) return;
-    const packageOwnerName = participantMap.get(packageOwnerId);
-
-    let voterVotes: Record<string, string> = {};
-    try {
-      if (typeof entry.correct_voters === 'string') {
-        voterVotes = JSON.parse(entry.correct_voters);
-      } else if (entry.correct_voters && typeof entry.correct_voters === 'object') {
-        voterVotes = entry.correct_voters as Record<string, string>;
-      }
-    } catch { voterVotes = {}; }
-
-    Object.entries(voterVotes).forEach(([voterName, votedForId]) => {
-      if (packageOwnerName && voterName === packageOwnerName) return;
-      voterTotalMap.set(voterName, (voterTotalMap.get(voterName) || 0) + 1);
-      if (votedForId === correctOwnerId) {
-        voterCorrectMap.set(voterName, (voterCorrectMap.get(voterName) || 0) + 1);
-      }
-    });
-  });
-
   const voterHeader = ['Namn', 'Rätt', 'Totalt', 'Procent'];
-  const voterData = Array.from(voterTotalMap.entries())
-    .map(([name, total]) => {
-      const correct = voterCorrectMap.get(name) || 0;
-      return [name, correct, total, total > 0 ? Math.round((correct / total) * 100) + '%' : '0%'];
-    })
-    .sort((a, b) => {
-      const pA = parseInt(String(a[3]));
-      const pB = parseInt(String(b[3]));
-      return pB - pA;
-    });
+  const voterData = allVoters.map(v => [v.name, v.correctVotes, v.totalVotes, v.percentage + '%']);
   const wsVoters = XLSX.utils.aoa_to_sheet([voterHeader, ...voterData]);
   wsVoters['!cols'] = [{ wch: 20 }, { wch: 8 }, { wch: 8 }, { wch: 10 }];
   XLSX.utils.book_append_sheet(wb, wsVoters, 'Röstare');
@@ -112,19 +70,11 @@ export function exportExcel(stats: GameStats): void {
   const detailData: (string | number)[][] = [];
 
   history.forEach((entry, index) => {
-    const packageOwnerId = entry.package_owner_id;
-    const correctOwnerId = packageOwnerId ? packageToCorrectOwner.get(packageOwnerId) : undefined;
+    const correctOwnerId = correctOwnerByEntry.get(entry.id);
     const holderName = entry.participant_id ? (participantMap.get(entry.participant_id) || 'Okänd') : 'Okänd';
     const correctOwnerName = correctOwnerId ? (participantMap.get(correctOwnerId) || 'Okänd') : '?';
 
-    let voterVotes: Record<string, string> = {};
-    try {
-      if (typeof entry.correct_voters === 'string') {
-        voterVotes = JSON.parse(entry.correct_voters);
-      } else if (entry.correct_voters && typeof entry.correct_voters === 'object') {
-        voterVotes = entry.correct_voters as Record<string, string>;
-      }
-    } catch { voterVotes = {}; }
+    const voterVotes = parseVoterVotes(entry.correct_voters);
 
     Object.entries(voterVotes).forEach(([voterName, votedForId]) => {
       const votedForName = participantMap.get(votedForId) || votedForId;

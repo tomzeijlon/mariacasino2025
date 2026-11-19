@@ -1,9 +1,19 @@
 import { parseVoteResults } from '@/lib/utils';
-import type { GameStats } from '@/pages/GameSummary';
+import { replayPackages, type GameStats } from '@/lib/gameStats';
+
+const escapeHtml = (value: unknown): string =>
+  String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 
 export function exportHTML(stats: GameStats): void {
-  const { easiest, hardest, mostMovedPackage, topVoters, history, participantMap, label } = stats;
+  const { easiest: rawEasiest, hardest: rawHardest, mostMovedPackage: rawMostMoved, topVoters: rawTopVoters, allVoters, history, participantMap } = stats;
+  // Escape every user-provided string (participant and voter names, label) before it goes into HTML
+  const label = escapeHtml(stats.label);
+  const easiest = rawEasiest && { ...rawEasiest, name: escapeHtml(rawEasiest.name) };
+  const hardest = rawHardest && { ...rawHardest, name: escapeHtml(rawHardest.name) };
+  const mostMovedPackage = rawMostMoved && { ...rawMostMoved, ownerName: escapeHtml(rawMostMoved.ownerName) };
+  const topVoters = rawTopVoters.map(v => ({ ...v, name: escapeHtml(v.name) }));
   const exportDate = new Date().toLocaleDateString('sv-SE', { year: 'numeric', month: 'long', day: 'numeric' });
+  const { moveCountByEntry } = replayPackages(history);
 
   const medals = ['🥇', '🥈', '🥉'];
 
@@ -18,58 +28,16 @@ export function exportHTML(stats: GameStats): void {
     return `
       <tr>
         <td>${index + 1}</td>
-        <td>${holderName}</td>
-        <td>${isMoved ? `${winnerName} ↑` : '✓ ' + holderName}</td>
+        <td>${escapeHtml(holderName)}</td>
+        <td>${isMoved ? `${escapeHtml(winnerName)} ↑` : '✓ ' + escapeHtml(holderName)}</td>
         <td>${totalVotes}</td>
-        <td>${entry.move_count || 0}</td>
+        <td>${moveCountByEntry.get(entry.id) ?? 0}</td>
       </tr>`;
   }).join('');
 
   // Build voter leaderboard rows
   const voterRows: string[] = [];
-  const voterTotalMap = new Map<string, number>();
-  const voterCorrectMap = new Map<string, number>();
-  const packageToCorrectOwner = new Map<string, string>();
-
-  history.forEach(entry => {
-    if (entry.package_owner_id && entry.locked_participant_id) {
-      packageToCorrectOwner.set(entry.package_owner_id, entry.locked_participant_id);
-    }
-  });
-
-  history.forEach(entry => {
-    const packageOwnerId = entry.package_owner_id;
-    if (!packageOwnerId) return;
-    const correctOwnerId = packageToCorrectOwner.get(packageOwnerId);
-    if (!correctOwnerId) return;
-    const packageOwnerName = participantMap.get(packageOwnerId);
-
-    let voterVotes: Record<string, string> = {};
-    try {
-      if (typeof entry.correct_voters === 'string') {
-        voterVotes = JSON.parse(entry.correct_voters);
-      } else if (entry.correct_voters && typeof entry.correct_voters === 'object') {
-        voterVotes = entry.correct_voters as Record<string, string>;
-      }
-    } catch { voterVotes = {}; }
-
-    Object.entries(voterVotes).forEach(([voterName, votedForId]) => {
-      if (packageOwnerName && voterName === packageOwnerName) return;
-      voterTotalMap.set(voterName, (voterTotalMap.get(voterName) || 0) + 1);
-      if (votedForId === correctOwnerId) {
-        voterCorrectMap.set(voterName, (voterCorrectMap.get(voterName) || 0) + 1);
-      }
-    });
-  });
-
-  const sortedVoters = Array.from(voterTotalMap.entries())
-    .map(([name, total]) => ({ name, total, correct: voterCorrectMap.get(name) || 0 }))
-    .sort((a, b) => {
-      const pctA = a.total > 0 ? a.correct / a.total : 0;
-      const pctB = b.total > 0 ? b.correct / b.total : 0;
-      if (pctB !== pctA) return pctB - pctA;
-      return b.correct - a.correct;
-    });
+  const sortedVoters = allVoters.map(v => ({ name: escapeHtml(v.name), total: v.totalVotes, correct: v.correctVotes }));
 
   sortedVoters.forEach((v, i) => {
     const pct = v.total > 0 ? Math.round((v.correct / v.total) * 100) : 0;

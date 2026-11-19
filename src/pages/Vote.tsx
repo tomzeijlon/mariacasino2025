@@ -39,6 +39,12 @@ export default function Vote() {
   const currentVoteCount = votes.length;
   const isOneVoteAway = currentVoteCount === totalVotersExpected - 1 && totalVotersExpected > 1;
 
+  // Re-open voting if the admin resets the round ("Nollställ") after the countdown expired
+  const belowCountdownThreshold = currentVoteCount < totalVotersExpected - 1;
+  useEffect(() => {
+    if (belowCountdownThreshold) setVotingDisabled(false);
+  }, [belowCountdownThreshold]);
+
   const handleVote = async (participantId: string): Promise<{ error: Error | null }> => {
     const result = await castVote(participantId);
     if (result.error) {

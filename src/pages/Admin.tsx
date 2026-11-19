@@ -47,9 +47,24 @@ export default function Admin() {
     archiveGame,
     fetchArchivedGames,
     startTiebreaker,
-    clearTiebreaker,
     getTiebreakerCandidates,
   } = useVoting();
+
+  // Game-flow actions take several seconds (many sequential requests). Run one at a time so a
+  // double-click can't save a round twice or start two sessions.
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const runExclusive = (action: () => Promise<void>) => async () => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    try {
+      await action();
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  };
 
   const [showArchiveDialog, setShowArchiveDialog] = useState(false);
   const [archiveYear, setArchiveYear] = useState(new Date().getFullYear());
@@ -99,13 +114,13 @@ export default function Admin() {
     }
   }, [session?.id]);
 
-  const handleReset = async () => {
+  const handleReset = runExclusive(async () => {
     await resetVoting();
     setShowResults(false);
     toast.success('Röstningen har nollställts');
-  };
+  });
 
-  const handleEnd = async () => {
+  const handleEnd = runExclusive(async () => {
     // Don't allow ending if there's a tie - must do tiebreaker first
     if (tiedCandidates) {
       toast.error('Lika röstetal! Starta omröstning mellan de bundna först.');
@@ -117,9 +132,8 @@ export default function Admin() {
       await markVotingComplete(currentParticipant.id, winner.participantId);
     }
     await endVoting(true, winner?.participantId);
-    clearTiebreaker();
     toast.success('Omröstningen har avslutats');
-  };
+  });
 
   const handleLockParticipant = async (id: string) => {
     const { error } = await lockParticipant(id);
@@ -129,7 +143,7 @@ export default function Admin() {
     return { error };
   };
 
-  const handleStartTiebreaker = async () => {
+  const handleStartTiebreaker = runExclusive(async () => {
     if (!currentParticipant || !tiedCandidates) return;
     
     const candidateIds = tiedCandidates.map(c => c.participantId);
@@ -139,19 +153,16 @@ export default function Admin() {
     await startTiebreaker(currentParticipant.id, candidateIds);
     
     toast.success(`Omröstning mellan: ${candidateNames}`);
-  };
+  });
 
-  const handleStartNextVoting = async () => {
+  const handleStartNextVoting = runExclusive(async () => {
+    if (session?.is_active && currentParticipant && tiedCandidates) {
+      toast.error('Lika röstetal! Starta omröstning mellan de bundna först.');
+      return;
+    }
     setShowResults(false);
-    clearTiebreaker();
-    
+
     if (session?.is_active && currentParticipant) {
-      // Check for tie first
-      if (tiedCandidates) {
-        toast.error('Lika röstetal! Starta omröstning mellan de bundna först.');
-        return;
-      }
-      
       // End current voting first with the winner
       const winner = voteCounts[0];
       if (winner) {
@@ -170,7 +181,7 @@ export default function Admin() {
         toast.info('Inga fler deltagare att rösta om');
       }
     }
-  };
+  });
 
   const handleArchiveGame = async () => {
     if (!archiveLabel.trim()) {
@@ -267,6 +278,7 @@ export default function Admin() {
                 onStartVoting={startVoting}
                 onUpdateOrder={updateParticipantOrder}
                 onStartNextVoting={handleStartNextVoting}
+                busy={busy}
                 currentVotingId={session?.current_participant_id || null}
               />
             </CardContent>
@@ -343,6 +355,7 @@ export default function Admin() {
                     <Button
                       variant="outline"
                       onClick={handleReset}
+                      disabled={busy}
                       className="flex-1"
                       size="sm"
                     >
@@ -362,6 +375,7 @@ export default function Admin() {
                       <Button
                         variant="festive"
                         onClick={handleStartTiebreaker}
+                        disabled={busy}
                         className="flex-1"
                         size="sm"
                       >
@@ -372,6 +386,7 @@ export default function Admin() {
                       <Button
                         variant="festive"
                         onClick={handleStartNextVoting}
+                        disabled={busy}
                         className="flex-1"
                         size="sm"
                       >
@@ -382,6 +397,7 @@ export default function Admin() {
                     <Button
                       variant="destructive"
                       onClick={handleEnd}
+                      disabled={busy}
                       className="flex-1"
                       size="sm"
                     >

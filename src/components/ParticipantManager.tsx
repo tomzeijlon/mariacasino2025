@@ -31,6 +31,7 @@ interface ParticipantManagerProps {
   onUpdateOrder: (orderedIds: string[]) => Promise<void>;
   onStartNextVoting: () => void;
   currentVotingId: string | null;
+  busy?: boolean;
 }
 
 export function ParticipantManager({
@@ -43,6 +44,7 @@ export function ParticipantManager({
   onUpdateOrder,
   onStartNextVoting,
   currentVotingId,
+  busy = false,
 }: ParticipantManagerProps) {
   const [newName, setNewName] = useState('');
   const [isAdding, setIsAdding] = useState(false);
@@ -138,6 +140,7 @@ export function ParticipantManager({
       {nextEligible && (
         <Button
           onClick={onStartNextVoting}
+          disabled={busy}
           variant="festive"
           className="w-full"
           size="default"
