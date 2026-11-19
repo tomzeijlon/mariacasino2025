@@ -29,16 +29,52 @@ interface WriteOp {
   returning?: 'none' | 'rows' | 'single';
 }
 
-// Which writes the admin page may perform
-const ALLOWED: Record<string, Action[]> = {
-  participants: ['insert', 'update', 'delete'],
-  voting_sessions: ['insert', 'update'],
-  votes: ['delete'],
-  voting_history: ['insert', 'update', 'delete'],
-  archived_games: ['insert'],
+// Exactly the writes the admin page performs: per table, the columns each action may set
+// and the columns it may filter on. Anything else is rejected.
+interface TableRules {
+  insert?: string[];
+  update?: string[];
+  delete?: boolean;
+  filters: string[];
+}
+const RULES: Record<string, TableRules> = {
+  participants: {
+    insert: ['name', 'sort_order'],
+    update: ['is_locked', 'has_received_package', 'last_voted_at', 'sort_order'],
+    delete: true,
+    filters: ['id'],
+  },
+  voting_sessions: {
+    insert: ['current_participant_id', 'is_active', 'tiebreaker_candidate_ids'],
+    update: ['is_active'],
+    filters: ['id', 'is_active'],
+  },
+  votes: {
+    delete: true,
+    filters: ['id', 'session_id'],
+  },
+  voting_history: {
+    insert: ['participant_id', 'package_owner_id', 'original_package_owner_id', 'results', 'correct_voters', 'move_count'],
+    update: ['locked_participant_id', 'archived_game_id'],
+    delete: true,
+    filters: ['id', 'archived_game_id'],
+  },
+  archived_games: {
+    insert: ['year', 'label'],
+    filters: [],
+  },
 };
+const MAX_TEXT_LENGTH = 20_000; // results/correct_voters JSON for a round is a few KB
+
+// Values must be plain scalars (or a list of ids for tiebreaker_candidate_ids)
+const isAllowedValue = (v: unknown): boolean =>
+  v === null ||
+  typeof v === 'boolean' ||
+  (typeof v === 'number' && Number.isFinite(v)) ||
+  (typeof v === 'string' && v.length <= MAX_TEXT_LENGTH) ||
+  (Array.isArray(v) && v.length <= 100 && v.every((x) => typeof x === 'string' && x.length <= 100));
+
 const FILTER_OPS = new Set<FilterOp>(['eq', 'neq', 'is', 'in']);
-const IDENTIFIER = /^[a-z_]{1,63}$/;
 const MAX_OPS = 50;
 
 const toBase64Url = (bytes: ArrayBuffer) =>
@@ -69,13 +105,21 @@ async function isValidAdminToken(token: string | null, secret: string): Promise<
 
 function validate(op: WriteOp): string | null {
   if (!op || typeof op !== 'object') return 'Invalid operation';
-  if (!ALLOWED[op.table]?.includes(op.action)) return `Not allowed: ${op.action} on ${op.table}`;
+  const rules = Object.prototype.hasOwnProperty.call(RULES, op.table) ? RULES[op.table] : undefined;
+  const allowedColumns = op.action === 'delete' ? [] : rules?.[op.action];
+  if (!rules || (op.action === 'delete' ? !rules.delete : !Array.isArray(allowedColumns))) {
+    return `Not allowed: ${op.action} on ${op.table}`;
+  }
 
   const rows = Array.isArray(op.values) ? op.values : op.values ? [op.values] : [];
+  if (op.action === 'delete' && rows.length > 0) return 'Delete takes no values';
   if (op.action !== 'delete' && rows.length === 0) return 'Missing values';
   for (const row of rows) {
-    if (!row || typeof row !== 'object') return 'Invalid values';
-    if (Object.keys(row).some((k) => !IDENTIFIER.test(k))) return 'Invalid column name';
+    if (!row || typeof row !== 'object' || Array.isArray(row)) return 'Invalid values';
+    for (const [column, value] of Object.entries(row)) {
+      if (!allowedColumns!.includes(column)) return `Column not allowed: ${op.table}.${column}`;
+      if (!isAllowedValue(value)) return `Invalid value for ${op.table}.${column}`;
+    }
   }
 
   const filters = op.filters ?? [];
@@ -85,7 +129,7 @@ function validate(op: WriteOp): string | null {
   for (const f of filters) {
     if (!Array.isArray(f) || f.length !== 3) return 'Invalid filter';
     const [column, filterOp, value] = f;
-    if (!IDENTIFIER.test(column) || !FILTER_OPS.has(filterOp)) return 'Invalid filter';
+    if (!rules.filters.includes(column) || !FILTER_OPS.has(filterOp)) return `Filter not allowed: ${op.table}.${column}`;
     if (filterOp === 'in' && !Array.isArray(value)) return 'Invalid "in" filter';
   }
   return null;
