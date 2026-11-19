@@ -139,6 +139,7 @@ All variables are prefixed with `VITE_` to be exposed to the client bundle.
 | session_id | UUID FK | Points to voting_sessions |
 | voted_for_participant_id | UUID FK | Who the voter guessed |
 | voter_token_hash | text | SHA-256 of the device's secret token (token itself lives only in the device's localStorage) |
+| voter_token | text | **Deprecated**, always `''` (default). Kept because Lovable can't drop columns; not read or written by the app |
 | voter_name | text | Optional display name |
 | created_at | timestamptz | |
 
@@ -287,7 +288,7 @@ This project has no test suite (no Jest, Vitest, Cypress, etc.). It was scaffold
 - Work on feature branches and merge to `main` via pull request
 
 ### Database changes must go through Lovable
-Lovable owns the Supabase project (Lovable Cloud). **SQL files committed to `supabase/migrations/` via GitHub are NOT applied to the live database.** The March 2026 migrations (`20260321…`, `20260322…`) sat unapplied for months, which silently broke the history panel, the summary page and archiving. To change the schema, prompt Lovable with the SQL so it runs the migration and regenerates `src/integrations/supabase/types.ts`. Write migrations idempotently (`IF NOT EXISTS`, `DROP … IF EXISTS`). If `npx tsc -p tsconfig.app.json --noEmit` complains about unknown tables/columns, the live schema is probably behind the code.
+Lovable owns the Supabase project (Lovable Cloud). **SQL files committed to `supabase/migrations/` via GitHub are NOT applied to the live database.** The March 2026 migrations (`20260321…`, `20260322…`) sat unapplied for months, which silently broke the history panel, the summary page and archiving. To change the schema, prompt Lovable with the SQL so it runs the migration and regenerates `src/integrations/supabase/types.ts`. Write migrations idempotently (`IF NOT EXISTS`, `DROP … IF EXISTS`). Lovable's platform refuses `DROP COLUMN`: plan to leave unused columns in place (empty, with a `DEPRECATED` comment) rather than dropping them — e.g. `votes.voter_token` (Nov 2026). If `npx tsc -p tsconfig.app.json --noEmit` complains about unknown tables/columns, the live schema is probably behind the code.
 
 ---
 
