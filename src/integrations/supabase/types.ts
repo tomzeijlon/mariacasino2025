@@ -73,6 +73,7 @@ export type Database = {
           voted_for_participant_id: string | null
           voter_name: string | null
           voter_token: string
+          voter_token_hash: string
         }
         Insert: {
           created_at?: string
@@ -80,7 +81,8 @@ export type Database = {
           session_id?: string | null
           voted_for_participant_id?: string | null
           voter_name?: string | null
-          voter_token: string
+          voter_token?: string
+          voter_token_hash: string
         }
         Update: {
           created_at?: string
@@ -89,6 +91,7 @@ export type Database = {
           voted_for_participant_id?: string | null
           voter_name?: string | null
           voter_token?: string
+          voter_token_hash?: string
         }
         Relationships: [
           {

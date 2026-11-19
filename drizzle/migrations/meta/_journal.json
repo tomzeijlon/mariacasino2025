@@ -8,6 +8,13 @@
       "when": 1795093752156,
       "tag": "0000_archived_games_catchup",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1795099087190,
+      "tag": "0001_lock_down_writes",
+      "breakpoints": true
     }
   ]
 }
