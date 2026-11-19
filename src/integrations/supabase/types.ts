@@ -14,6 +14,27 @@ export type Database = {
   }
   public: {
     Tables: {
+      archived_games: {
+        Row: {
+          created_at: string
+          id: string
+          label: string
+          year: number
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          label: string
+          year: number
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          label?: string
+          year?: number
+        }
+        Relationships: []
+      }
       participants: {
         Row: {
           created_at: string
@@ -88,6 +109,7 @@ export type Database = {
       }
       voting_history: {
         Row: {
+          archived_game_id: string | null
           correct_voters: Json | null
           created_at: string
           id: string
@@ -99,6 +121,7 @@ export type Database = {
           results: Json
         }
         Insert: {
+          archived_game_id?: string | null
           correct_voters?: Json | null
           created_at?: string
           id?: string
@@ -110,6 +133,7 @@ export type Database = {
           results: Json
         }
         Update: {
+          archived_game_id?: string | null
           correct_voters?: Json | null
           created_at?: string
           id?: string
@@ -121,6 +145,13 @@ export type Database = {
           results?: Json
         }
         Relationships: [
+          {
+            foreignKeyName: "voting_history_archived_game_id_fkey"
+            columns: ["archived_game_id"]
+            isOneToOne: false
+            referencedRelation: "archived_games"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "voting_history_locked_participant_id_fkey"
             columns: ["locked_participant_id"]
@@ -150,18 +181,21 @@ export type Database = {
           current_participant_id: string | null
           id: string
           is_active: boolean
+          tiebreaker_candidate_ids: string[] | null
         }
         Insert: {
           created_at?: string
           current_participant_id?: string | null
           id?: string
           is_active?: boolean
+          tiebreaker_candidate_ids?: string[] | null
         }
         Update: {
           created_at?: string
           current_participant_id?: string | null
           id?: string
           is_active?: boolean
+          tiebreaker_candidate_ids?: string[] | null
         }
         Relationships: [
           {
