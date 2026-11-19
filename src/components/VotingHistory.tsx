@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { adminDb } from '@/lib/adminDb';
 import { Button } from '@/components/ui/button';
 import { Trash2, History, ArrowRight } from 'lucide-react';
 import { toast } from 'sonner';
@@ -60,7 +61,7 @@ export function VotingHistory() {
   }, []);
 
   const deleteEntry = async (id: string) => {
-    const { error } = await supabase.from('voting_history').delete().eq('id', id);
+    const { error } = await adminDb.from('voting_history').delete().eq('id', id);
     if (error) {
       toast.error('Kunde inte ta bort historikpost');
     } else {

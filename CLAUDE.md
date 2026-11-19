@@ -25,7 +25,7 @@ This file describes the codebase structure, development conventions, and workflo
 | Styling | Tailwind CSS 3.4, CSS variables |
 | Components | shadcn/ui (Radix UI primitives) |
 | State | React hooks + TanStack Query v5 |
-| Forms | React Hook Form + Zod |
+| Forms | React Hook Form (shadcn `form.tsx`; currently unused) |
 | Charts | Recharts |
 | DnD | dnd-kit |
 | Toasts | Sonner |
@@ -138,7 +138,7 @@ All variables are prefixed with `VITE_` to be exposed to the client bundle.
 | id | UUID PK | |
 | session_id | UUID FK | Points to voting_sessions |
 | voted_for_participant_id | UUID FK | Who the voter guessed |
-| voter_token | text | localStorage-persisted client identifier |
+| voter_token_hash | text | SHA-256 of the device's secret token (token itself lives only in the device's localStorage) |
 | voter_name | text | Optional display name |
 | created_at | timestamptz | |
 
@@ -224,12 +224,15 @@ export default ComponentName;
 - Server state: TanStack Query (`useQuery`, `useMutation`) for external data
 - Local/UI state: `useState`, `useReducer`
 - Real-time: Supabase channel subscriptions inside `useEffect` with cleanup
-- Persistence: `localStorage` for voter token, voter name, admin auth flag
+- Persistence: `localStorage` for voter token and voter name; `sessionStorage` for the admin token
 
-### Admin Auth
-- Password is checked by the `verify-admin` Supabase Edge Function against the `ADMIN_PASSWORD` secret (never put the password in code or docs)
-- On success a flag is stored in `sessionStorage` — resets on tab close
-- This is a soft gate only: RLS policies allow the anon key to read/write every table, so anyone can bypass it. Acceptable for a family game; don't store anything sensitive.
+### Security model (writes go through edge functions)
+- Browsers use the public anon key and can only **read** the game tables (RLS: SELECT-only policies; INSERT/UPDATE/DELETE revoked from `anon`/`authenticated`).
+- **Voters** vote via the `cast-vote` edge function. It checks that the round is active, that the participant isn't locked, and the tiebreaker candidates, then upserts the vote keyed on the SHA-256 of the device token.
+- **Admin** logs in via `verify-admin` (checks the `ADMIN_PASSWORD` secret; never put the password in code or docs). It returns an HMAC-signed token valid for 12 h, stored in `sessionStorage`. Every admin write goes through `admin-write` via `adminDb` in `src/lib/adminDb.ts`, which mirrors the Supabase builder: `adminDb.from('t').update({...}).eq('id', id)`. The function verifies the token and an allowlist of table/action pairs.
+- New write paths must use `adminDb` (admin) or a dedicated edge function (voters); a direct `supabase.from(...).insert/update/delete` will be rejected by the database. If a new table/action is needed, extend `ALLOWED` in `supabase/functions/admin-write/index.ts`.
+- Edge functions are deployed by Lovable; changing them requires asking Lovable to deploy.
+- Known limit: without user accounts, someone could still script extra votes from new device tokens; they cannot change or delete anything.
 
 ### Notifications
 Use `sonner` toast via:
