@@ -1,35 +1,35 @@
-import * as XLSX from 'xlsx';
+import writeExcelFile from 'write-excel-file/browser';
 import { parseVoteResults } from '@/lib/utils';
 import { parseVoterVotes, replayPackages, type GameStats } from '@/lib/gameStats';
 
-export function exportExcel(stats: GameStats): void {
+type Cell = string | number | null;
+
+export async function exportExcel(stats: GameStats): Promise<void> {
   const { easiest, hardest, mostMovedPackage, topVoters, allVoters, history, participantMap, correctOwnerByEntry, label } = stats;
   const { moveCountByEntry } = replayPackages(history);
-  const wb = XLSX.utils.book_new();
+  const sheets: { data: Cell[][]; sheet: string; columns: { width: number }[] }[] = [];
 
   // ── Sheet 1: Sammanfattning ──────────────────────────────────────────────────
-  const summaryRows: (string | number)[][] = [
+  const summaryRows: Cell[][] = [
     ['Maria Casino — ' + label],
-    [],
+    [null],
     ['Bästa röstarna', '', '', ''],
     ['Rank', 'Namn', 'Rätt', 'Totalt', 'Procent'],
     ...topVoters.map((v, i) => [i + 1, v.name, v.correctVotes, v.totalVotes, v.percentage + '%']),
-    [],
+    [null],
     ['Lättast att gissa'],
     ['Namn', 'Omgångar', 'Felaktiga röster'],
     easiest ? [easiest.name, easiest.roundCount, easiest.wrongVotes] : ['(ingen data)'],
-    [],
+    [null],
     ['Svårast att gissa'],
     ['Namn', 'Omgångar', 'Felaktiga röster'],
     hardest ? [hardest.name, hardest.roundCount, hardest.wrongVotes] : ['(ingen data)'],
-    [],
+    [null],
     ['Mest flyttade paketet'],
     ['Ursprungsägare', 'Antal förflyttningar'],
     mostMovedPackage ? [mostMovedPackage.ownerName, mostMovedPackage.moveCount] : ['(inga förflyttningar)'],
   ];
-  const wsSummary = XLSX.utils.aoa_to_sheet(summaryRows);
-  wsSummary['!cols'] = [{ wch: 25 }, { wch: 20 }, { wch: 12 }, { wch: 12 }, { wch: 10 }];
-  XLSX.utils.book_append_sheet(wb, wsSummary, 'Sammanfattning');
+  sheets.push({ data: summaryRows, sheet: 'Sammanfattning', columns: [{ width: 25 }, { width: 20 }, { width: 12 }, { width: 12 }, { width: 10 }] });
 
   // ── Sheet 2: Omgångar ────────────────────────────────────────────────────────
   const roundHeader = ['Omgång', 'Pakethållare', 'Vinnare', 'Röster totalt', 'Rätta röster', 'Felaktiga röster', 'Förflyttningar'];
@@ -53,21 +53,17 @@ export function exportExcel(stats: GameStats): void {
       moveCountByEntry.get(entry.id) ?? 0,
     ];
   });
-  const wsRounds = XLSX.utils.aoa_to_sheet([roundHeader, ...roundData]);
-  wsRounds['!cols'] = [{ wch: 8 }, { wch: 18 }, { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 16 }];
-  XLSX.utils.book_append_sheet(wb, wsRounds, 'Omgångar');
+  sheets.push({ data: [roundHeader, ...roundData], sheet: 'Omgångar', columns: [{ width: 8 }, { width: 18 }, { width: 18 }, { width: 14 }, { width: 14 }, { width: 18 }, { width: 16 }] });
 
   // ── Sheet 3: Röstare ─────────────────────────────────────────────────────────
   const voterHeader = ['Namn', 'Rätt', 'Totalt', 'Procent'];
   const voterData = allVoters.map(v => [v.name, v.correctVotes, v.totalVotes, v.percentage + '%']);
-  const wsVoters = XLSX.utils.aoa_to_sheet([voterHeader, ...voterData]);
-  wsVoters['!cols'] = [{ wch: 20 }, { wch: 8 }, { wch: 8 }, { wch: 10 }];
-  XLSX.utils.book_append_sheet(wb, wsVoters, 'Röstare');
+  sheets.push({ data: [voterHeader, ...voterData], sheet: 'Röstare', columns: [{ width: 20 }, { width: 8 }, { width: 8 }, { width: 10 }] });
 
   // ── Sheet 4: Deltagardetaljer ────────────────────────────────────────────────
   // One row per (voter, round) showing who they voted for and if correct
   const detailHeader = ['Röstare', 'Omgång', 'Pakethållare', 'Röstade på', 'Rätt ägare', 'Rätt?'];
-  const detailData: (string | number)[][] = [];
+  const detailData: Cell[][] = [];
 
   history.forEach((entry, index) => {
     const correctOwnerId = correctOwnerByEntry.get(entry.id);
@@ -90,9 +86,7 @@ export function exportExcel(stats: GameStats): void {
     });
   });
 
-  const wsDetail = XLSX.utils.aoa_to_sheet([detailHeader, ...detailData]);
-  wsDetail['!cols'] = [{ wch: 18 }, { wch: 8 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 8 }];
-  XLSX.utils.book_append_sheet(wb, wsDetail, 'Deltagardetaljer');
+  sheets.push({ data: [detailHeader, ...detailData], sheet: 'Deltagardetaljer', columns: [{ width: 18 }, { width: 8 }, { width: 18 }, { width: 18 }, { width: 18 }, { width: 8 }] });
 
-  XLSX.writeFile(wb, `maria-casino-${label.replace(/[^a-zA-Z0-9åäöÅÄÖ]/g, '-')}.xlsx`);
+  await writeExcelFile(sheets).toFile(`maria-casino-${label.replace(/[^a-zA-Z0-9åäöÅÄÖ]/g, '-')}.xlsx`);
 }

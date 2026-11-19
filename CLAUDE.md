@@ -25,7 +25,7 @@ This file describes the codebase structure, development conventions, and workflo
 | Styling | Tailwind CSS 3.4, CSS variables |
 | Components | shadcn/ui (Radix UI primitives) |
 | State | React hooks + TanStack Query v5 |
-| Forms | React Hook Form + Zod |
+| Forms | React Hook Form (shadcn `form.tsx`; currently unused) |
 | Charts | Recharts |
 | DnD | dnd-kit |
 | Toasts | Sonner |
