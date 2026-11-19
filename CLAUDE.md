@@ -229,9 +229,10 @@ export default ComponentName;
 ### Security model (writes go through edge functions)
 - Browsers use the public anon key and can only **read** the game tables (RLS: SELECT-only policies; INSERT/UPDATE/DELETE revoked from `anon`/`authenticated`).
 - **Voters** vote via the `cast-vote` edge function. It checks that the round is active, that the participant isn't locked, and the tiebreaker candidates, then upserts the vote keyed on the SHA-256 of the device token.
-- **Admin** logs in via `verify-admin` (checks the `ADMIN_PASSWORD` secret; never put the password in code or docs). It returns an HMAC-signed token valid for 12 h, stored in `sessionStorage`. Every admin write goes through `admin-write` via `adminDb` in `src/lib/adminDb.ts`, which mirrors the Supabase builder: `adminDb.from('t').update({...}).eq('id', id)`. The function verifies the token and an allowlist of table/action pairs.
-- New write paths must use `adminDb` (admin) or a dedicated edge function (voters); a direct `supabase.from(...).insert/update/delete` will be rejected by the database. If a new table/action is needed, extend `ALLOWED` in `supabase/functions/admin-write/index.ts`.
+- **Admin** logs in via `verify-admin` (checks the `ADMIN_PASSWORD` secret; never put the password in code or docs). It returns an HMAC-signed token valid for 12 h, stored in `sessionStorage`. Every admin write goes through `admin-write` via `adminDb` in `src/lib/adminDb.ts`, which mirrors the Supabase builder: `adminDb.from('t').update({...}).eq('id', id)`. The function verifies the token and an allowlist (`RULES`) of which columns each table/action may set and which columns may be filtered on.
+- New write paths must use `adminDb` (admin) or a dedicated edge function (voters); a direct `supabase.from(...).insert/update/delete` will be rejected by the database. If the admin page needs to write a new table, action or column, add it to `RULES` in `supabase/functions/admin-write/index.ts` (and ask Lovable to redeploy the function).
 - Edge functions are deployed by Lovable; changing them requires asking Lovable to deploy.
+- Public read access on all game tables is intentional (phones and realtime need it); security scanners flag it as "anyone can read every record" — accept those findings rather than restricting SELECT.
 - Known limit: without user accounts, someone could still script extra votes from new device tokens; they cannot change or delete anything.
 
 ### Notifications
