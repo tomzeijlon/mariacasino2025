@@ -278,9 +278,9 @@ This project has no test suite (no Jest, Vitest, Cypress, etc.). It was scaffold
 ## Deployment
 
 - **Platform:** Lovable (https://lovable.dev)
-- **Method:** Push to `master` branch → Lovable auto-deploys
+- **Method:** Merge to `main` (the default branch) → Lovable auto-deploys
 - **Custom domain:** Configurable in Lovable project settings
-- Do not push directly to `main` — use `master` or feature branches
+- Work on feature branches and merge to `main` via pull request
 
 ### Database changes must go through Lovable
 Lovable owns the Supabase project (Lovable Cloud). **SQL files committed to `supabase/migrations/` via GitHub are NOT applied to the live database.** The March 2026 migrations (`20260321…`, `20260322…`) sat unapplied for months, which silently broke the history panel, the summary page and archiving. To change the schema, prompt Lovable with the SQL so it runs the migration and regenerates `src/integrations/supabase/types.ts`. Write migrations idempotently (`IF NOT EXISTS`, `DROP … IF EXISTS`). If `npx tsc -p tsconfig.app.json --noEmit` complains about unknown tables/columns, the live schema is probably behind the code.
