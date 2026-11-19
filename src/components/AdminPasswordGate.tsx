@@ -4,6 +4,7 @@ import { Input } from '@/components/ui/input';
 import { Lock } from 'lucide-react';
 import { Snowfall } from '@/components/Snowfall';
 import { supabase } from '@/integrations/supabase/client';
+import { setAdminToken } from '@/lib/adminDb';
 
 interface AdminPasswordGateProps {
   onSuccess: () => void;
@@ -24,11 +25,11 @@ export function AdminPasswordGate({ onSuccess }: AdminPasswordGateProps) {
         body: { password },
       });
 
-      if (fnError || !data?.success) {
+      if (fnError || !data?.success || !data?.token) {
         setError(true);
         setPassword('');
       } else {
-        sessionStorage.setItem('admin_authenticated', 'true');
+        setAdminToken(data.token);
         onSuccess();
       }
     } catch {

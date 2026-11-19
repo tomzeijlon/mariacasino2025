@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { adminDb, adminWrite } from '@/lib/adminDb';
 import { entriesForPackage, packageHeldBy, replayPackages } from '@/lib/gameStats';
 
 export interface Participant {
@@ -25,7 +26,8 @@ export interface Vote {
   id: string;
   session_id: string;
   voted_for_participant_id: string;
-  voter_token: string;
+  /** SHA-256 of the voting device's secret token (the token itself is never stored) */
+  voter_token_hash: string;
   voter_name: string | null;
   created_at: string;
 }
@@ -58,6 +60,15 @@ export function useVoting() {
     }
     return token;
   }, []);
+
+  // Hash of this device's token, used to recognise its own vote among everyone's votes
+  const [voterTokenHash, setVoterTokenHash] = useState<string | null>(null);
+  useEffect(() => {
+    const bytes = new TextEncoder().encode(getVoterToken());
+    crypto.subtle.digest('SHA-256', bytes).then(digest => {
+      setVoterTokenHash([...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join(''));
+    });
+  }, [getVoterToken]);
 
   // Fetch initial data
   const fetchData = useCallback(async () => {
@@ -130,13 +141,13 @@ export function useVoting() {
   const addParticipant = useCallback(async (name: string) => {
     // Get max sort_order
     const maxOrder = participants.reduce((max, p) => Math.max(max, p.sort_order || 0), 0);
-    const { error } = await supabase.from('participants').insert({ name, sort_order: maxOrder + 1 });
+    const { error } = await adminDb.from('participants').insert({ name, sort_order: maxOrder + 1 });
     return { error };
   }, [participants]);
 
   // Remove participant
   const removeParticipant = useCallback(async (id: string) => {
-    const { error } = await supabase.from('participants').delete().eq('id', id);
+    const { error } = await adminDb.from('participants').delete().eq('id', id);
     return { error };
   }, []);
 
@@ -159,7 +170,7 @@ export function useVoting() {
     const idsToUpdate = entriesForPackage(history, packageKey);
 
     if (idsToUpdate.length > 0) {
-      const { error: historyError } = await supabase
+      const { error: historyError } = await adminDb
         .from('voting_history')
         .update({ locked_participant_id: id })
         .in('id', idsToUpdate);
@@ -169,32 +180,32 @@ export function useVoting() {
       }
     }
 
-    const { error } = await supabase.from('participants').update({ is_locked: true }).eq('id', id);
+    const { error } = await adminDb.from('participants').update({ is_locked: true }).eq('id', id);
     return { error };
   }, [fetchCurrentHistoryForReplay]);
 
   // Unlock participant
   const unlockParticipant = useCallback(async (id: string) => {
-    const { error } = await supabase.from('participants').update({ is_locked: false }).eq('id', id);
+    const { error } = await adminDb.from('participants').update({ is_locked: false }).eq('id', id);
     return { error };
   }, []);
 
   // Start voting for a participant
   const startVoting = useCallback(async (participantId: string) => {
     // Deactivate any existing session
-    await supabase.from('voting_sessions').update({ is_active: false }).eq('is_active', true);
+    await adminDb.from('voting_sessions').update({ is_active: false }).eq('is_active', true);
     
     // Delete old votes
     if (session?.id) {
-      await supabase.from('votes').delete().eq('session_id', session.id);
+      await adminDb.from('votes').delete().eq('session_id', session.id);
     }
 
     // Create new session
-    const { data, error } = await supabase
+    const { data, error } = await adminDb
       .from('voting_sessions')
       .insert({ current_participant_id: participantId, is_active: true })
       .select()
-      .single();
+      .single<VotingSession>();
     
     if (data) setSession(data);
     setVotes([]);
@@ -206,7 +217,7 @@ export function useVoting() {
   const resetVoting = useCallback(async () => {
     if (session?.id) {
       // Just delete votes, no history save - history is saved when locking
-      await supabase.from('votes').delete().eq('session_id', session.id);
+      await adminDb.from('votes').delete().eq('session_id', session.id);
       setVotes([]);
     }
   }, [session]);
@@ -253,7 +264,7 @@ export function useVoting() {
             }
           });
 
-          await supabase.from('voting_history').insert({
+          await adminDb.from('voting_history').insert({
             participant_id: session.current_participant_id,
             package_owner_id: session.current_participant_id,
             original_package_owner_id: originalPackageOwnerId,
@@ -264,8 +275,8 @@ export function useVoting() {
         }
       }
       
-      await supabase.from('votes').delete().eq('session_id', session.id);
-      await supabase.from('voting_sessions').update({ is_active: false }).eq('id', session.id);
+      await adminDb.from('votes').delete().eq('session_id', session.id);
+      await adminDb.from('voting_sessions').update({ is_active: false }).eq('id', session.id);
       setSession(null);
       setVotes([]);
     }
@@ -274,19 +285,19 @@ export function useVoting() {
   // Start a tiebreaker vote with only specific candidates
   const startTiebreaker = useCallback(async (participantId: string, candidateIds: string[]) => {
     // Deactivate any existing session
-    await supabase.from('voting_sessions').update({ is_active: false }).eq('is_active', true);
+    await adminDb.from('voting_sessions').update({ is_active: false }).eq('is_active', true);
     
     // Delete old votes
     if (session?.id) {
-      await supabase.from('votes').delete().eq('session_id', session.id);
+      await adminDb.from('votes').delete().eq('session_id', session.id);
     }
 
     // Create new session; candidates are stored on the session so every device sees them
-    const { data, error } = await supabase
+    const { data, error } = await adminDb
       .from('voting_sessions')
       .insert({ current_participant_id: participantId, is_active: true, tiebreaker_candidate_ids: candidateIds })
       .select()
-      .single();
+      .single<VotingSession>();
     
     if (data) setSession(data);
     setVotes([]);
@@ -300,34 +311,20 @@ export function useVoting() {
     return ids && ids.length > 0 ? ids : null;
   }, [session]);
 
-  // Cast a vote
+  // Cast or change this device's vote (validated and stored by the cast-vote edge function)
   const castVote = useCallback(async (participantId: string) => {
     if (!session?.id) return { error: new Error('No active session') };
 
-    const voterToken = getVoterToken();
-    const voterName = localStorage.getItem('voter_name') || null;
-    
-    // Check if already voted in this session
-    const existingVote = votes.find(v => v.voter_token === voterToken);
-    
-    if (existingVote) {
-      // Update existing vote
-      const { error } = await supabase
-        .from('votes')
-        .update({ voted_for_participant_id: participantId, voter_name: voterName })
-        .eq('id', existingVote.id);
-      return { error };
-    } else {
-      // Insert new vote
-      const { error } = await supabase.from('votes').insert({
-        session_id: session.id,
-        voted_for_participant_id: participantId,
-        voter_token: voterToken,
-        voter_name: voterName,
-      });
-      return { error };
-    }
-  }, [session, votes, getVoterToken]);
+    const { error } = await supabase.functions.invoke('cast-vote', {
+      body: {
+        voterToken: getVoterToken(),
+        sessionId: session.id,
+        participantId,
+        voterName: localStorage.getItem('voter_name') || null,
+      },
+    });
+    return { error: error as Error | null };
+  }, [session, getVoterToken]);
 
   // Get vote counts
   const getVoteCounts = useCallback((): VoteCount[] => {
@@ -349,15 +346,13 @@ export function useVoting() {
 
   // Check if current user has voted
   const hasVoted = useCallback(() => {
-    const voterToken = getVoterToken();
-    return votes.some(v => v.voter_token === voterToken);
-  }, [votes, getVoterToken]);
+    return !!voterTokenHash && votes.some(v => v.voter_token_hash === voterTokenHash);
+  }, [votes, voterTokenHash]);
 
   // Get current user's vote
   const getCurrentVote = useCallback(() => {
-    const voterToken = getVoterToken();
-    return votes.find(v => v.voter_token === voterToken);
-  }, [votes, getVoterToken]);
+    return voterTokenHash ? votes.find(v => v.voter_token_hash === voterTokenHash) : undefined;
+  }, [votes, voterTokenHash]);
 
   // Get current participant being voted on
   const getCurrentParticipant = useCallback(() => {
@@ -367,15 +362,15 @@ export function useVoting() {
 
   // Update participant order
   const updateParticipantOrder = useCallback(async (orderedIds: string[]) => {
-    const updates = orderedIds.map((id, index) => 
-      supabase.from('participants').update({ sort_order: index + 1 }).eq('id', id)
-    );
-    await Promise.all(updates);
+    // One request for the whole new order
+    await adminWrite(orderedIds.map((id, index) =>
+      adminDb.from('participants').update({ sort_order: index + 1 }).eq('id', id).toOp()
+    ));
   }, []);
 
   // Set has_received_package
   const setHasReceivedPackage = useCallback(async (id: string, hasPackage: boolean) => {
-    const { error } = await supabase
+    const { error } = await adminDb
       .from('participants')
       .update({ has_received_package: hasPackage })
       .eq('id', id);
@@ -416,20 +411,20 @@ export function useVoting() {
     
     if (participantId !== winnerId) {
       // Winner gets the package - marked with has_received_package
-      await supabase
+      await adminDb
         .from('participants')
         .update({ has_received_package: true })
         .eq('id', winnerId);
       
       // Previous holder loses their marker (they get a random package, not voted)
-      await supabase
+      await adminDb
         .from('participants')
         .update({ has_received_package: false })
         .eq('id', participantId);
     }
     
     // Mark participant as having finished voting
-    await supabase
+    await adminDb
       .from('participants')
       .update({ last_voted_at: new Date().toISOString() })
       .eq('id', participantId);
@@ -462,7 +457,7 @@ export function useVoting() {
       if (allEligible.length === 1) {
         // Only one person left - auto-mark their package as voted
         // since there's no one else to vote on it (Bug 5 fix)
-        await supabase
+        await adminDb
           .from('participants')
           .update({ has_received_package: true })
           .eq('id', allEligible[0].id);
@@ -480,18 +475,18 @@ export function useVoting() {
   // Archive current game (tag all current history with an archived_game_id) then reset
   const archiveGame = useCallback(async (year: number, label: string): Promise<{ error: Error | null }> => {
     // 1. Create the archive record
-    const { data: archiveData, error: insertError } = await supabase
+    const { data: archiveData, error: insertError } = await adminDb
       .from('archived_games')
       .insert({ year, label })
       .select()
-      .single();
+      .single<ArchivedGame>();
 
     if (insertError || !archiveData) {
       return { error: insertError as Error };
     }
 
     // 2. Tag all current (unarchived) history rows
-    const { error: tagError } = await supabase
+    const { error: tagError } = await adminDb
       .from('voting_history')
       .update({ archived_game_id: archiveData.id })
       .is('archived_game_id', null);
@@ -499,19 +494,19 @@ export function useVoting() {
     if (tagError) return { error: tagError as Error };
 
     // 3. Reset participant flags
-    await supabase
+    await adminDb
       .from('participants')
       .update({ is_locked: false, has_received_package: false, last_voted_at: null })
       .neq('id', '00000000-0000-0000-0000-000000000000');
 
     // 4. End any active session
-    await supabase
+    await adminDb
       .from('voting_sessions')
       .update({ is_active: false })
       .eq('is_active', true);
 
     // 5. Delete all votes
-    await supabase
+    await adminDb
       .from('votes')
       .delete()
       .neq('id', '00000000-0000-0000-0000-000000000000');
@@ -548,7 +543,7 @@ export function useVoting() {
   // Reset all game state except names
   const resetGame = useCallback(async () => {
     // Reset all participants
-    await supabase
+    await adminDb
       .from('participants')
       .update({ 
         is_locked: false, 
@@ -558,19 +553,19 @@ export function useVoting() {
       .neq('id', '00000000-0000-0000-0000-000000000000');
     
     // Delete the current game's history (archived games are kept)
-    await supabase
+    await adminDb
       .from('voting_history')
       .delete()
       .is('archived_game_id', null);
     
     // End any active session
-    await supabase
+    await adminDb
       .from('voting_sessions')
       .update({ is_active: false })
       .eq('is_active', true);
     
     // Delete all votes
-    await supabase
+    await adminDb
       .from('votes')
       .delete()
       .neq('id', '00000000-0000-0000-0000-000000000000');

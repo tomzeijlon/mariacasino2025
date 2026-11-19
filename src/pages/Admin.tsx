@@ -6,6 +6,7 @@ import { VoteChart } from '@/components/VoteChart';
 import { ParticipantManager } from '@/components/ParticipantManager';
 import { VotingHistory } from '@/components/VotingHistory';
 import { AdminPasswordGate } from '@/components/AdminPasswordGate';
+import { ADMIN_AUTH_EXPIRED_EVENT, getAdminToken } from '@/lib/adminDb';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
@@ -17,9 +18,17 @@ import { Link, useNavigate } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 
 export default function Admin() {
-  const [isAuthenticated, setIsAuthenticated] = useState(() => {
-    return sessionStorage.getItem('admin_authenticated') === 'true';
-  });
+  const [isAuthenticated, setIsAuthenticated] = useState(() => !!getAdminToken());
+
+  // The admin token expires (or the password changed): ask for the password again
+  useEffect(() => {
+    const onExpired = () => {
+      setIsAuthenticated(false);
+      toast.error('Inloggningen har gått ut. Logga in igen.');
+    };
+    window.addEventListener(ADMIN_AUTH_EXPIRED_EVENT, onExpired);
+    return () => window.removeEventListener(ADMIN_AUTH_EXPIRED_EVENT, onExpired);
+  }, []);
   const [showResults, setShowResults] = useState(false);
   const prevVoteCount = useRef(0);
   const { playAllVoted, playLocked } = useSoundEffects();
