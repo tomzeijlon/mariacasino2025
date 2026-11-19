@@ -10,10 +10,31 @@ export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.1"
+    PostgrestVersion: "14.18"
   }
   public: {
     Tables: {
+      archived_games: {
+        Row: {
+          created_at: string
+          id: string
+          label: string
+          year: number
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          label: string
+          year: number
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          label?: string
+          year?: number
+        }
+        Relationships: []
+      }
       participants: {
         Row: {
           created_at: string
@@ -88,6 +109,7 @@ export type Database = {
       }
       voting_history: {
         Row: {
+          archived_game_id: string | null
           correct_voters: Json | null
           created_at: string
           id: string
@@ -99,6 +121,7 @@ export type Database = {
           results: Json
         }
         Insert: {
+          archived_game_id?: string | null
           correct_voters?: Json | null
           created_at?: string
           id?: string
@@ -110,6 +133,7 @@ export type Database = {
           results: Json
         }
         Update: {
+          archived_game_id?: string | null
           correct_voters?: Json | null
           created_at?: string
           id?: string
@@ -121,6 +145,13 @@ export type Database = {
           results?: Json
         }
         Relationships: [
+          {
+            foreignKeyName: "voting_history_archived_game_id_fkey"
+            columns: ["archived_game_id"]
+            isOneToOne: false
+            referencedRelation: "archived_games"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "voting_history_locked_participant_id_fkey"
             columns: ["locked_participant_id"]
@@ -150,18 +181,21 @@ export type Database = {
           current_participant_id: string | null
           id: string
           is_active: boolean
+          tiebreaker_candidate_ids: string[] | null
         }
         Insert: {
           created_at?: string
           current_participant_id?: string | null
           id?: string
           is_active?: boolean
+          tiebreaker_candidate_ids?: string[] | null
         }
         Update: {
           created_at?: string
           current_participant_id?: string | null
           id?: string
           is_active?: boolean
+          tiebreaker_candidate_ids?: string[] | null
         }
         Relationships: [
           {
@@ -197,12 +231,12 @@ export type Tables<
   DefaultSchemaTableNameOrOptions extends
     | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
         DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -226,11 +260,11 @@ export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -251,11 +285,11 @@ export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -276,11 +310,11 @@ export type Enums<
   DefaultSchemaEnumNameOrOptions extends
     | keyof DefaultSchema["Enums"]
     | { schema: keyof DatabaseWithoutInternals },
-  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+  EnumName extends (DefaultSchemaEnumNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaEnumNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -293,11 +327,11 @@ export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
     | keyof DefaultSchema["CompositeTypes"]
     | { schema: keyof DatabaseWithoutInternals },
-  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+  CompositeTypeName extends (PublicCompositeTypeNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
-    : never = never,
+    : never) = never,
 > = PublicCompositeTypeNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
